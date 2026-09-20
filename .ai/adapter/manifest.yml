@@ -9,22 +9,22 @@ project:
   path: authenticator.xcodeproj
   scheme: authenticator
   test_scheme: authenticator
-  bundle_id: "devplaceholder.$(PROJECT_UNIQUE_VALUE:identifier).$(PRODUCT_NAME:rfc1034identifier)"
-  team_id: ""
+  bundle_id: "co.alley51.authenticator"
+  team_id: "HA7PT38WRU"
 
 toolchain:
-  xcode: "27.1"
+  xcode: "27.0"
   swift: "6.4"
   min_ios: "26.0"
   strict_concurrency: complete
 
 simulator:
   name: "iPhone 18 Pro"
-  runtime: "iOS 27.1"
+  runtime: "iOS 27.0"
 
 device:
-  name: ""                       # fill with the primary development iPhone
-  min_supported: ""              # oldest device kept for verification
+  name: "iPhone 18 Pro" # fill with the primary development iPhone
+  min_supported: "18" # oldest device kept for verification
 
 tiers:
   - static

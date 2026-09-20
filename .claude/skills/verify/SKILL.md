@@ -25,9 +25,9 @@ by hand, and edit the evidence file to record:
 ```yaml
 runtime:
   target: device
-  device: "iPhone 17 Pro / iOS 27.1"
+  device: 'iPhone 17 Pro / iOS 27.0'
   scenarios:
-    - {name: "code survives app relaunch after Face ID", result: PASS}
+    - { name: 'code survives app relaunch after Face ID', result: PASS }
 ```
 
 Three rules, no exceptions:

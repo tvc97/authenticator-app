@@ -28,10 +28,13 @@ command -v xcbeautify >/dev/null 2>&1 && ok "xcbeautify" || warn "xcbeautify mis
 command -v jq >/dev/null 2>&1 && ok "jq" || note "jq" "brew install jq"
 
 say "Simulator"
-if xcrun simctl list devices available 2>/dev/null | grep -q "$(mval simulator.name)"; then
+# Resolved through the Core Device hub, matching name AND runtime AND reality.
+# Grepping for the name alone passes on a name/runtime pair that does not exist.
+sim_os=$(mval simulator.runtime | sed 's/^iOS //')
+if [ -n "$(hub_udid "$(mval simulator.name)" simulated "$sim_os")" ]; then
   ok "$(mval simulator.name) / $(mval simulator.runtime)"
 else
-  note "simulator '$(mval simulator.name)'" "xcrun simctl list devices available, then update .ai/adapter/manifest.yml"
+  note "no simulated '$(mval simulator.name)' on iOS $sim_os" "xcrun devicectl list devices   # name, reality and OS; then update .ai/adapter/manifest.yml"
 fi
 
 say "Project"

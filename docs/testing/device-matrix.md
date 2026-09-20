@@ -1,9 +1,11 @@
 # Device Matrix
 
 ## Simulator (routine verification)
-- iPhone 18 Pro / iOS 27.1 — the default in `.ai/adapter/manifest.yml`
+
+- iPhone 18 Pro / iOS 27.0 — the default in `.ai/adapter/manifest.yml`
 
 ## Physical (required before release)
+
 - Primary development iPhone — fill in `manifest.yml: device.name`
 - Oldest supported device — fill in `manifest.yml: device.min_supported`
 
@@ -17,5 +19,5 @@ Every runtime claim in `evidence.yml` must carry the real device string:
 ```yaml
 runtime:
   target: device
-  device: "iPhone 17 Pro / iOS 27.1"
+  device: 'iPhone 17 Pro / iOS 27.0'
 ```
