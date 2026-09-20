@@ -212,5 +212,57 @@ for f in "authenticator/Keychain/Store.swift" "authenticator/Backup/Export.swift
   refuses "review_path $f needs a verdict" "no cold review is on record"
 done
 
+# 15. The human_paths entries that had no coverage. Removing any one from the manifest must
+#     turn an assertion red, the same way the review_paths half now does.
+for f in "authenticator/App.entitlements" ".claude/hooks/stop-evidence.sh" ".claude/settings.json"; do
+  setup
+  commit_file "$f" "x"
+  run_check
+  refuses "human_path $f is refused" "human-only paths modified"
+done
+
+# 16. Case. On a case-insensitive filesystem authenticator/info.plist IS Info.plist, and a
+#     case-sensitive matcher would wave it past the human_paths check.
+setup
+commit_file "authenticator/info.plist" "x"
+run_check
+refuses "human_path matching ignores case" "human-only paths modified"
+
+# 17. A manifest pattern that is not a valid ERE must fail closed. Collapsing grep's exit 2
+#     into "no match" switched that rule off while the gate stayed green.
+setup
+commit_file "authenticator/Info.plist" "x"
+sed 's|^  - "\*\*/\*.entitlements"|  - "**/*[.entitlements"|' "$REPO/.ai/adapter/manifest.yml" > "$TMP/wt/.ai/adapter/manifest.yml"
+run_check
+refuses "an invalid manifest pattern fails closed" "not a valid regular expression"
+
+# 18. A tag is not a branch. `git tag t HEAD~1; BASE_REF=t` once exited 0 on an Info.plist diff.
+setup
+commit_file "authenticator/Info.plist" "x"
+commit_file "docs/harmless.md" "y"
+git -C "$TMP/wt" tag sneaky HEAD~1
+if ( cd "$TMP/wt" && BASE_REF=sneaky ./.ai/adapter/checks/scope-check main 99 ) >/dev/null 2>&1; then
+  red "a tag pointing at HEAD~1 must not be accepted as a base"
+else
+  green "a tag is refused as a base"
+fi
+
+# 19. The ancestor guard on its own: a real BRANCH that contains HEAD passes the named-ref
+#     rule, so only the ancestor check can refuse it.
+setup
+commit_file "authenticator/Info.plist" "x"
+git -C "$TMP/wt" branch ahead
+git -C "$TMP/wt" checkout -q ahead
+mkdir -p "$TMP/wt/docs"
+printf 'z\n' > "$TMP/wt/docs/ahead.md"
+git -C "$TMP/wt" add -A
+git -C "$TMP/wt" commit -qm ahead
+git -C "$TMP/wt" checkout -q task/99-gate-test
+if ( cd "$TMP/wt" && BASE_REF=ahead ./.ai/adapter/checks/scope-check main 99 ) >/dev/null 2>&1; then
+  red "a branch that already contains HEAD must be refused"
+else
+  green "a branch containing HEAD is refused"
+fi
+
 printf '\033[1m==>\033[0m %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1

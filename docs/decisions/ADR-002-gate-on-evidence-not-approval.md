@@ -83,12 +83,16 @@ outcome that is neither pass nor failure, and that `flow verify` exits non-zero 
 verdict on disk, and `/review` must print `precheck OK` before `gh pr create`.
 
 **The gates have a regression test.** `.ai/adapter/checks/gate-test` builds a throwaway repo
-and asserts thirteen properties, each one a way the gate could pass when it should not:
-human-path hard failure even with an APPROVE on record; missing, stale, nested and
-`REQUEST_CHANGES` verdicts; a rename out of a guarded directory; a missing base ref; a base
-that already contains HEAD (`BASE_REF=HEAD` would otherwise empty the diff and green the
-whole gate); and a rule list the manifest could not supply. It runs inside the `static`
-tier. Without it the compensating control is exercised by nothing — the Swift tiers do not
+and makes 26 assertions, each one a way the gate could pass when it should not: every
+`human_paths` and `review_paths` entry enforced individually; a human path refused even
+with an APPROVE on record; missing, stale, nested and `REQUEST_CHANGES` verdicts; a rename
+out of a guarded directory; a path differing only in case; a manifest pattern that is not a
+valid regular expression; a rule list the manifest could not supply; and four ways to
+narrow the base until the diff no longer contains the offending commit — a missing ref, a
+ref that contains HEAD, a bare commit or SHA, and a tag pointing at one. Every assertion
+checks the **exit status**, not just the message: an earlier revision matched on output
+text and stayed green against a `scope-check` that printed every refusal it prints today
+and refused nothing. It runs inside the `static` tier. Without it the compensating control is exercised by nothing — the Swift tiers do not
 touch a line of it, and two rounds of cold review found real holes in it that only the suite
 could keep shut.
 
