@@ -9,6 +9,11 @@
 # Runs against a throwaway git repo in a temp dir. Touches nothing in the real tree.
 set -eu
 
+# The caller may be verifying a stacked branch with BASE_REF set. These fixtures are
+# throwaway repos where that ref does not exist, and scope-check now fails closed on an
+# unknown base -- correctly. Clear it so the tests exercise the rules, not the guard.
+unset BASE_REF
+
 SELF=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$SELF/../../.." && pwd)
 pass=0; fail=0
@@ -122,6 +127,13 @@ mkdir -p "$TMP/wt/.ai/run/99"
 printf 'issue: 99\ncommit: %s\nitems:\n  - verdict: APPROVE\n' "$(head_of)" > "$TMP/wt/.ai/run/99/review.yml"
 out=$(run_check || true)
 case "$out" in *"not APPROVE"*|*"no cold review"*) green "a nested verdict does not count" ;; *) red "nested verdict must not count: $out" ;; esac
+
+# 10. A missing base ref must NOT skip the gate. It used to warn and exit 0, which turned
+#     the entire check off on a typo or an unfetched remote.
+setup
+commit_file "authenticator/Info.plist" "x"
+out=$( ( cd "$TMP/wt" && BASE_REF=no/such/ref ./.ai/adapter/checks/scope-check main 99 2>&1 ) || true )
+case "$out" in *"not found"*) green "missing base ref fails closed" ;; *) red "missing base ref must not skip: $out" ;; esac
 
 printf '\033[1m==>\033[0m %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1

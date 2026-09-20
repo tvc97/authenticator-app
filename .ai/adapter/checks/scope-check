@@ -6,9 +6,17 @@
 # Patterns from the manifest are handled as text. Without -f the shell expands an unquoted
 # "**/Crypto/**" against the working tree and reports files instead of the rule that matched.
 set -f
-base=${1:-origin/main}
+# BASE_REF wins, then $1, then origin/main. A stacked branch must be judged against its
+# parent branch; against main it re-litigates the parent's diff. scripts/ai/flow passes
+# the same value it uses for every other path check.
+base=${BASE_REF:-${1:-origin/main}}
 git -C "$ROOT" rev-parse --verify HEAD >/dev/null 2>&1 || { warn "no commits yet — scope check skipped"; exit 0; }
-git -C "$ROOT" rev-parse --verify "$base" >/dev/null 2>&1 || { warn "base ref '$base' not found — scope check skipped"; exit 0; }
+# FAIL CLOSED. This used to warn and exit 0, which meant a typo'd or unfetched base ref
+# silently disabled the human-path and review-path checks entirely -- the whole gate, off,
+# with a yellow WARN as the only trace. A gate that skips itself when confused is not a gate.
+git -C "$ROOT" rev-parse --verify "$base" >/dev/null 2>&1 || die "base ref '$base' not found.
+  The scope gate cannot run without a base to diff against, and it will not skip itself.
+  Fix: git fetch origin, or set BASE_REF to the branch this one will merge into."
 # --no-renames is load-bearing. With rename detection on, moving Sources/Crypto/HMAC.swift
 # to Sources/Util/HMAC.swift reports ONLY the destination, so no rule matches and crypto
 # walks out of a guarded directory unreviewed. Without it, both paths are reported.
