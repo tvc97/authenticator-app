@@ -23,6 +23,7 @@ usage: ./scripts/ai/flow <command> [issue]
   verify <issue>    run the required tiers and write evidence
   evidence <issue>  print the evidence file and whether it is fresh
   review <issue>    print the recorded cold-review verdict and whether it is fresh
+  precheck <issue>  everything that must hold before a PR may be opened
   gates             show gate labels and whether they exist in the repo
 USAGE
 }
@@ -30,10 +31,27 @@ USAGE
 head_sha() { git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo "none"; }
 branch()   { b=$(git -C "$ROOT" symbolic-ref --short HEAD 2>/dev/null) && [ -n "$b" ] && printf '%s\n' "$b" || printf 'none\n'; }
 
+base_ref() {
+  for r in origin/main main; do
+    git -C "$ROOT" rev-parse --verify "$r" >/dev/null 2>&1 && { printf '%s\n' "$r"; return; }
+  done
+  printf 'HEAD\n'
+}
+
+# --no-renames: see the comment in .ai/adapter/checks/scope-check. A rename out of a guarded
+# directory reports only the destination, and the guard never fires.
+changed_files() { git -C "$ROOT" diff --no-renames --name-only "$(base_ref)"...HEAD 2>/dev/null || true; }
+changed_diff()  { git -C "$ROOT" diff --no-renames "$(base_ref)"...HEAD 2>/dev/null || true; }
+
 evidence_file() { printf '%s/%s/evidence.yml' "$RUNDIR" "$1"; }
 review_file()   { printf '%s/%s/review.yml'   "$RUNDIR" "$1"; }
+device_file()   { printf '%s/%s/device.yml'   "$RUNDIR" "$1"; }
 
+# First match only. Two readers disagreeing about one field is how REQUEST CHANGES becomes
+# APPROVE; scope-check parses these files identically.
 yval() { awk -F': *' -v k="$2" '$0 ~ "^"k":" {print $2; exit}' "$1" 2>/dev/null | tr -d ' \r'; }
+
+tier_lines() { awk '/^tiers:/{t=1;next} t && /^[a-z]/{t=0} t' "$1"; }
 
 evidence_fresh() {
   f=$(evidence_file "$1"); [ -f "$f" ] || return 1
@@ -42,7 +60,14 @@ evidence_fresh() {
 
 evidence_all_pass() {
   f=$(evidence_file "$1"); [ -f "$f" ] || return 1
-  ! awk '/^tiers:/{t=1;next} t && /^[a-z]/{t=0} t' "$f" | grep -qE ':[[:space:]]*(FAIL|SKIP)'
+  ! tier_lines "$f" | grep -qE ':[[:space:]]*(FAIL|SKIP)'
+}
+
+# True when runtime is the ONLY tier that is not PASS.
+evidence_only_runtime_short() {
+  f=$(evidence_file "$1"); [ -f "$f" ] || return 1
+  tier_lines "$f" | grep -qE '^[[:space:]]*runtime:[[:space:]]*SKIP' || return 1
+  ! tier_lines "$f" | grep -vE '^[[:space:]]*runtime:' | grep -qE ':[[:space:]]*(FAIL|SKIP)'
 }
 
 review_fresh() {
@@ -50,12 +75,50 @@ review_fresh() {
   [ "$(yval "$f" commit)" = "$(head_sha)" ]
 }
 
-review_verdict() { f=$(review_file "$1"); [ -f "$f" ] && yval "$f" verdict || echo ""; }
+# Normalised: uppercase, spaces stripped. The reviewer agent is told to return
+# "REQUEST CHANGES"; review.yml documents "REQUEST_CHANGES". Both must land in one bucket,
+# or a rejection silently reads as "no verdict" and the review loops forever.
+review_verdict() {
+  f=$(review_file "$1"); [ -f "$f" ] || { echo ""; return; }
+  v=$(yval "$f" verdict | tr '[:lower:]' '[:upper:]' | tr -d '_-')
+  case "$v" in "") echo "" ;; APPROVE) echo "APPROVE" ;; *) echo "CHANGES_REQUIRED" ;; esac
+}
 
-# An issue labelled device-required cannot have its runtime tier satisfied by this machine.
+device_run_ok() {
+  f=$(device_file "$1"); [ -f "$f" ] || return 1
+  [ "$(yval "$f" commit)" = "$(head_sha)" ] || return 1
+  [ "$(yval "$f" result | tr '[:lower:]' '[:upper:]')" = "PASS" ]
+}
+
+# Does this issue's runtime tier require a PHYSICAL device?
+#
+# Fails CLOSED. "Could not determine" is answered yes, because the cost of a wrong no is
+# recording a simulator run as device verification -- the exact collapse CLAUDE.md forbids.
 needs_device() {
-  have_gh || return 1
-  gh issue view "$1" --json labels --jq '.labels[].name' 2>/dev/null | grep -qx "device-required"
+  issue=$1
+  # 1. Observable in the diff, regardless of how the issue was labelled.
+  d=$(changed_diff)
+  if [ -n "$d" ]; then
+    for m in $(mlist device_required_markers); do
+      printf '%s' "$d" | grep -E '^[+-]' | grep -qF "$m" && return 0
+    done
+  fi
+  # 2. The explicit label. Unreadable labels are not a no.
+  have_gh || return 0
+  gh issue view "$issue" --json labels --jq '.labels[].name' 2>/dev/null | grep -qx "device-required" && return 0
+  gh issue view "$issue" --json labels >/dev/null 2>&1 || return 0
+  return 1
+}
+
+# Does the diff change app behaviour a user could exercise? If so, a launch-only runtime run
+# is not the whole claim -- CLAUDE.md defines the tier as "launched AND the flow worked".
+touches_app_sources() {
+  changed_files | grep -E '\.swift$' | grep -vE '(Tests|UITests)/' | grep -q .
+}
+
+scenario_for() {
+  s="$ROOT/.ai/scenarios/$1.sh"
+  [ -x "$s" ] && printf '%s\n' "$s" || printf '\n'
 }
 
 derive() {
@@ -70,6 +133,8 @@ derive() {
       if evidence_fresh "$issue" && evidence_all_pass "$issue"; then
         review_fresh "$issue" && [ "$(review_verdict "$issue")" = "APPROVE" ] \
           && echo "READY_TO_MERGE(offline)" || echo "AWAITING_REVIEW(offline)"
+      elif evidence_fresh "$issue" && evidence_only_runtime_short "$issue" && needs_device "$issue"; then
+        echo "DEVICE_RUN_REQUIRED(offline)"
       else echo "IMPLEMENTING(offline)"; fi
     fi
     return
@@ -94,10 +159,15 @@ derive() {
     git -C "$ROOT" show-ref --verify --quiet "refs/heads/$(git -C "$ROOT" branch --list "*/$issue-*" | head -1 | tr -d ' *')" 2>/dev/null \
       && echo "IMPLEMENTING" || echo "READY_TO_START"; return; }
 
-  if ! evidence_fresh "$issue" || ! evidence_all_pass "$issue"; then echo "VERIFYING"; return; fi
+  if ! evidence_fresh "$issue" || ! evidence_all_pass "$issue"; then
+    if evidence_fresh "$issue" && evidence_only_runtime_short "$issue" && needs_device "$issue"; then
+      echo "DEVICE_RUN_REQUIRED"; return
+    fi
+    echo "VERIFYING"; return
+  fi
 
   case "$(review_verdict "$issue")" in
-    REQUEST_CHANGES) echo "CHANGES_REQUIRED" ;;
+    CHANGES_REQUIRED) echo "CHANGES_REQUIRED" ;;
     APPROVE) review_fresh "$issue" && echo "READY_TO_MERGE" || echo "AWAITING_REVIEW(stale)" ;;
     *) echo "AWAITING_REVIEW" ;;
   esac
@@ -110,6 +180,9 @@ next_action() {
     READY_TO_START)             echo "/implement $2  — creates worktree + branch, then implements the plan" ;;
     IMPLEMENTING*)              echo "/implement $2  — continue; verify after each small step" ;;
     VERIFYING*)                 echo "./scripts/ai/flow verify $2  — run tiers and write evidence" ;;
+    DEVICE_RUN_REQUIRED*)       echo "HUMAN: this change cannot be verified on a simulator. Build to the iPhone,
+       run the scenarios in docs/testing/security-matrix.md, then record the result:
+       .ai/run/$2/device.yml  ->  commit: <HEAD>  device: \"<name> / <iOS>\"  result: PASS" ;;
     AWAITING_REVIEW*)           echo "/review $2  — cold reviewer subagent, no implementation context" ;;
     CHANGES_REQUIRED)           echo "/implement $2  — address the numbered review items, then re-verify" ;;
     READY_TO_MERGE)             echo "/integrate $2  — merge, close, update milestone" ;;
@@ -134,20 +207,40 @@ cmd_verify() {
     printf '%-12s %s\n' "$tier" "$r"
   done
 
-  # Runtime. The simulator run is automatic; a device run is not, because no agent can plug
-  # in a phone. Those stay SKIP and stay listed under unverified -- deliberately.
-  rt_target=none; rt_device=""
+  # Runtime.
+  #
+  # PASS requires the whole claim, not half of it. CLAUDE.md defines the tier as "the app
+  # actually launched AND the flow actually worked", so a launch-only run only earns PASS
+  # when there is no user-facing flow to drive. A device run is never automatic -- nobody
+  # can plug in a phone on the agent's behalf -- so it is read from a recorded device.yml.
+  rt_target=none; rt_device=""; rt_scen="[]"; rt_reason=""
+  scen=$(scenario_for "$issue")
   if [ "$status" != PASS ]; then
-    rt=SKIP; rt_reason="earlier tier failed"
+    rt=SKIP; rt_reason="an earlier tier failed; runtime was not attempted"
   elif needs_device "$issue"; then
-    rt=SKIP; rt_reason="issue is labelled device-required; a physical device run cannot be automated"
-  elif ISSUE="$issue" sh "$ADAPTER/run" sim >"$d/runtime-tier.log" 2>&1; then
-    rt=PASS; rt_target=sim
+    if device_run_ok "$issue"; then
+      rt=PASS; rt_target=device
+      rt_device="$(yval "$(device_file "$issue")" device)"
+      rt_scen="recorded in device.yml"
+    else
+      rt=SKIP
+      rt_reason="device run required (label or a device_required_markers hit in the diff) and no fresh .ai/run/$issue/device.yml records one"
+    fi
+  elif ISSUE="$issue" sh "$ADAPTER/run" sim "$scen" >"$d/runtime-tier.log" 2>&1; then
+    rt_target=sim
     rt_device="$(mval simulator.name) / $(mval simulator.runtime) (reality: simulated)"
-    rt_reason=""
+    if [ -n "$scen" ]; then
+      rt=PASS; rt_scen="driven by $scen"
+    elif touches_app_sources; then
+      rt=SKIP
+      rt_reason="app sources changed but no scenario script drove a user flow; launch and log audit alone are not the runtime claim. Add .ai/scenarios/$issue.sh"
+    else
+      rt=PASS; rt_scen="none-required (no app source changed; launch and log secret audit are the whole claim)"
+    fi
   else
     rt=FAIL; status=FAIL; rt_reason="see .ai/run/$issue/runtime-tier.log"
   fi
+  [ "$rt" = SKIP ] && [ "$status" = PASS ] && status=INCOMPLETE
   printf '  %-12s %s\n' "runtime:" "$rt" >> "$d/tiers.tmp"
   printf '%-12s %s\n' "runtime" "$rt"
 
@@ -157,16 +250,32 @@ cmd_verify() {
     cat "$d/tiers.tmp"
     printf '\nruntime:\n  target: %s\n' "$rt_target"
     [ -n "$rt_device" ] && printf '  device: "%s"\n' "$rt_device"
-    printf '  scenarios: []\n\nunverified:\n'
+    printf '  scenarios: %s\n\nunverified:\n' "$rt_scen"
     awk '$2 != "PASS" { sub(/:$/, "", $1); printf "  - id: %s\n    reason: \"tier reported %s\"\n", $1, $2 }' "$d/tiers.tmp"
-    [ "$rt" = PASS ] && printf '  - id: runtime-scenarios\n    reason: "launch and log secret audit only; no user flow was driven"\n'
     [ -n "$rt_reason" ] && printf '  - id: runtime-detail\n    reason: "%s"\n' "$rt_reason"
     printf '\nadapter:\n  platform: %s\n  xcode: "%s"\n  simulator: "%s / %s"\n' \
       "$(mval platform)" "$(mval toolchain.xcode)" "$(mval simulator.name)" "$(mval simulator.runtime)"
   } > "$d/evidence.yml"
   rm -f "$d/tiers.tmp"
   say "evidence written: .ai/run/$issue/evidence.yml"
-  [ "$status" = PASS ] || die "verification failed — see .ai/run/$issue/*.log"
+  case "$status" in
+    PASS) : ;;
+    INCOMPLETE) die "a required tier did not run — see unverified: in .ai/run/$issue/evidence.yml
+  This is not a failure and not a pass. Resolve it; do not edit the file." ;;
+    *) die "verification failed — see .ai/run/$issue/*.log" ;;
+  esac
+}
+
+# Everything that must hold before a PR may exist. The deleted CI used to run scope-check;
+# nothing else does, so this is the only automatic caller. See ADR-002.
+cmd_precheck() {
+  issue=$1
+  say "precheck #$issue"
+  evidence_fresh "$issue" || die "evidence for #$issue is missing or STALE — run: ./scripts/ai/flow verify $issue"
+  evidence_all_pass "$issue" || die "evidence for #$issue has a tier that is not PASS — see .ai/run/$issue/evidence.yml"
+  ok "evidence fresh and all-PASS"
+  sh "$ADAPTER/checks/scope-check" "$(base_ref)" "$issue" || exit 1
+  ok "precheck OK — a PR may be opened"
 }
 
 case "${1:-}" in
@@ -174,6 +283,7 @@ case "${1:-}" in
               "$(branch)" "$(head_sha)" "${2:-auto}" "$s" ;;
   next)     s=$(derive "${2:-}"); printf 'STATE: %s\nNEXT:  %s\n' "$s" "$(next_action "$s" "${2:-<issue>}")" ;;
   verify)   [ -n "${2:-}" ] || { usage; exit 1; }; cmd_verify "$2" ;;
+  precheck) [ -n "${2:-}" ] || { usage; exit 1; }; cmd_precheck "$2" ;;
   evidence) f=$(evidence_file "${2:?issue required}"); [ -f "$f" ] || die "no evidence for #$2"
             cat "$f"; evidence_fresh "$2" && ok "fresh (matches HEAD)" || die "STALE — HEAD moved since verification" ;;
   review)   f=$(review_file "${2:?issue required}"); [ -f "$f" ] || die "no cold review for #$2 — run /review $2"

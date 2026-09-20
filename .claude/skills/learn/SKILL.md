@@ -50,11 +50,14 @@ A prompt-only fix is the last resort.
 
 ## Write authority
 
-| Write freely | Propose only (human merges) | Frozen |
+Amended by ADR-002: "propose only" no longer means *wait for a human*. It means the change
+does not land until a cold review records `verdict: APPROVE` at the current HEAD.
+
+| Write freely | Write, but a cold review gates it (`review_paths`) | Cannot write at all (`human_paths`) |
 |---|---|---|
-| ledger entries, counters | `CLAUDE.md` | permissions / deny-list |
-| regression tests | hooks | signing + credentials |
-| `docs/troubleshooting/` | verification tiers | release gates |
-| issue/PR bodies, labels | adapter verbs | `gate:*` semantics |
+| ledger entries, counters | `CLAUDE.md` | permissions / deny-list (`.claude/settings.json`) |
+| regression tests | adapter verbs, verification tiers | hooks (`.claude/hooks/**`) |
+| `docs/troubleshooting/` | `scripts/ai/**`, `.github/**` | entitlements, `Info.plist` |
+| issue/PR bodies, labels | `Crypto/`, `Keychain/`, `Backup/` | signing + credentials, `gate:release-approved` |
 
 **One proposal per issue, maximum.** A workflow that rewrites itself after every mistake is unstable.

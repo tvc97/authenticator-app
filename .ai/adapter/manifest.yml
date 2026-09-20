@@ -47,12 +47,31 @@ device_required_for:
   - entitlements
   - push-notifications
 
-# Paths an agent may NEVER change. `scope-check` fails hard and `pre-tool-safety.sh`
-# blocks the edit outright. These stay human-only because the agent physically cannot
-# satisfy them -- not because the change is merely risky.
+# Source markers that force a device run even when the issue was never labelled
+# device-required. The label is a sentence someone remembered to write; a marker in the
+# diff is observable. Matched case-sensitively against added/removed lines.
+device_required_markers:
+  - "kSecAttrAccessible"
+  - "kSecAttrSynchronizable"
+  - "SecAccessControl"
+  - "LAContext"
+  - "LocalAuthentication"
+  - "AVCaptureDevice"
+  - "ASCredentialProvider"
+  - "WCSession"
+  - "com.apple.developer"
+  - "BGTaskScheduler"
+
+# Paths an agent may NEVER change. `scope-check` fails hard; `pre-tool-safety.sh` and the
+# settings deny list block the edit outright. The test is not "is this risky" -- it is
+# "can an agent satisfy this at all". If the tooling blocks it, it belongs here, otherwise
+# the manifest invites an edit the tooling refuses, which is an invitation to route around
+# the deny list.
 human_paths:
   - "**/*.entitlements"
   - "**/Info.plist"
+  - ".claude/hooks/**"
+  - ".claude/settings.json"
 
 # High blast radius. An agent MAY change these, but the change is not complete until a cold
 # `reviewer` subagent records APPROVE in .ai/run/<issue>/review.yml AND the security tier
@@ -62,10 +81,9 @@ review_paths:
   - "**/Crypto/**"
   - "**/Keychain/**"
   - "**/Backup/**"
-  - ".claude/hooks/**"
-  - ".claude/settings.json"
   - ".ai/adapter/**"
   - "scripts/ai/**"
+  - ".github/**"
 
 artifacts:
   dir: build

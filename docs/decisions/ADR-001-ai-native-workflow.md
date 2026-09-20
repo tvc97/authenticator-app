@@ -42,3 +42,10 @@ project memory, and a model's assertion that something works is not evidence.
 
 Signing, entitlements, credentials, hooks and release gates are **frozen paths**: an agent
 may propose changes but never apply them.
+
+*(Amended by ADR-002. `frozen_paths` split in two. Signing, credentials, entitlements,
+`Info.plist`, the hooks and `settings.json` became `human_paths` — an agent cannot write them
+at all, which is what the sentence above was reaching for. Crypto, Keychain, Backup, the
+adapter and `scripts/ai/**` became `review_paths`: an agent may apply changes there, but they
+do not land without a recorded cold-review APPROVE at the current HEAD. `gate:release-approved`
+is unchanged.)*

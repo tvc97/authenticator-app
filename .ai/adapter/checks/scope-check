@@ -9,7 +9,10 @@ set -f
 base=${1:-origin/main}
 git -C "$ROOT" rev-parse --verify HEAD >/dev/null 2>&1 || { warn "no commits yet — scope check skipped"; exit 0; }
 git -C "$ROOT" rev-parse --verify "$base" >/dev/null 2>&1 || { warn "base ref '$base' not found — scope check skipped"; exit 0; }
-changed=$(git -C "$ROOT" diff --name-only "$base"...HEAD)
+# --no-renames is load-bearing. With rename detection on, moving Sources/Crypto/HMAC.swift
+# to Sources/Util/HMAC.swift reports ONLY the destination, so no rule matches and crypto
+# walks out of a guarded directory unreviewed. Without it, both paths are reported.
+changed=$(git -C "$ROOT" diff --no-renames --name-only "$base"...HEAD)
 [ -n "$changed" ] || { ok "no changes"; exit 0; }
 
 issue=${2:-}
@@ -60,8 +63,11 @@ rv="$RUNDIR/$issue/review.yml"
   Missing: .ai/run/$issue/review.yml
   Fix: /review $issue   # delegates to the reviewer subagent, which writes the verdict"
 
-verdict=$(awk -F': *' '/^verdict:/{print $2}' "$rv" | tr -d ' \r')
-rcommit=$(awk -F': *' '/^commit:/{print $2}' "$rv" | tr -d ' \r')
+# First match only, and uppercased with spaces collapsed -- scripts/ai/flow reads this same
+# file the same way. Two readers disagreeing about one verdict is how a REQUEST CHANGES
+# becomes an APPROVE.
+verdict=$(awk -F': *' '/^verdict:/{print $2; exit}' "$rv" | tr -d ' \r' | tr '[:lower:]' '[:upper:]')
+rcommit=$(awk -F': *' '/^commit:/{print $2; exit}' "$rv" | tr -d ' \r')
 head=$(git -C "$ROOT" rev-parse --short HEAD)
 
 [ "$verdict" = "APPROVE" ] || die "cold review verdict is '$verdict', not APPROVE.

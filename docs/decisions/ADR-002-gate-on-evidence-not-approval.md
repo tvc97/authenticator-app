@@ -49,7 +49,8 @@ Everything else is derived from evidence on disk.
 | | old | new |
 |---|---|---|
 | entitlements, `Info.plist` | stop and ask | `human_paths` — agent cannot edit them at all |
-| Crypto, Keychain, Backup, adapter, hooks, `scripts/ai/**` | stop and ask | `review_paths` — cold review must record APPROVE |
+| hooks, `settings.json` | stop and ask | `human_paths` — the deny list already blocks the edit |
+| Crypto, Keychain, Backup, adapter, `scripts/ai/**`, `.github/**` | stop and ask | `review_paths` — cold review must record APPROVE |
 
 **The reviewer's verdict becomes evidence.** `/review` writes `.ai/run/<issue>/review.yml`
 with `verdict` and the `commit` actually reviewed. `scope-check` refuses a `review_paths`
@@ -61,6 +62,31 @@ observable data, not a sentence someone wrote.
 that happens after it. `flow verify` now also runs the simulator runtime tier automatically,
 so the common path reaches all-PASS without hand-editing the evidence file — which was itself
 a quiet invitation to write `PASS` for something that never ran.
+
+**A device run is recorded, not asserted.** `flow verify` reads `.ai/run/<issue>/device.yml`
+(`commit` = HEAD, `result: PASS`, the real device string) and only then records
+`runtime.target: device`. The requirement itself is detected two ways: the `device-required`
+label, and `manifest.yml: device_required_markers` matched against the diff. The markers
+matter because a label is a sentence someone remembered to write; `kSecAttrAccessible`
+appearing in a diff is observable. The check **fails closed** — if the label set cannot be
+read, the answer is "device required", because the cost of a wrong "no" is recording a
+simulator run as device verification.
+
+**A launch is not a runtime PASS.** CLAUDE.md defines the tier as *launched **and** the flow
+worked*. `flow verify` grants `PASS` when a scenario script drove a flow, or when no app
+source changed at all (tooling work has no user flow to drive, and launch plus the log secret
+audit is then the whole claim). An app-source change with no scenario is `SKIP` — a third
+outcome that is neither pass nor failure, and that `flow verify` exits non-zero on.
+
+**`scope-check` has an automatic caller again.** The deleted CI job was its only one.
+`flow precheck <issue>` re-checks evidence freshness and runs `scope-check` against the
+verdict on disk, and `/review` must print `precheck OK` before `gh pr create`.
+
+**The gates have a regression test.** `.ai/adapter/checks/gate-test` builds a throwaway repo
+and asserts nine properties: human-path hard failure even with an APPROVE on record, missing
+verdict, `REQUEST_CHANGES`, stale verdict, fresh verdict, a verdict smuggled into a nested
+key, and a rename out of a guarded directory. It runs inside the `static` tier. Without it,
+the compensating control is exercised by nothing — the Swift tiers do not touch a line of it.
 
 ## Alternatives considered
 
@@ -74,6 +100,9 @@ need the Xcode toolchain, so neither leaves macOS.
 **Remove every gate, including entitlements.** Rejected, and not because of risk appetite —
 because it is not achievable. The `settings.json` deny list and `pre-tool-safety.sh` both
 block those edits, so an agent cannot satisfy such a change no matter what the policy says.
+The same test moved `.claude/hooks/**` and `.claude/settings.json` into `human_paths`: the
+deny list blocks them too, and a manifest that invites an edit the tooling refuses is an
+invitation to route around the deny list.
 
 **Let the agent approve its own PR on GitHub.** Rejected: GitHub forbids it, and routing
 around that with a second token would fake independence rather than provide it.
@@ -94,6 +123,14 @@ Bad, and accepted deliberately:
 - **The cold reviewer is now the only check before `main`.** Its independence is enforced by
   convention — it must not be given implementation context — not by a mechanism.
 - Bringing CI back for genuine cross-machine verification requires a new ADR.
+
+**Outstanding, and it needs the human.** `.claude/hooks/stop-evidence.sh` enforces the
+evidence half of the Completion rule but not the review half: it checks `evidence.yml`'s
+`commit` and stops there, so an agent could write `DONE` on a `review_paths` diff with no
+verdict on disk. The hook is `human_paths` — an agent cannot edit it, which is the correct
+classification and also why this is not fixed here. The fix is one line calling
+`./scripts/ai/flow precheck "$issue"`. Until then `precheck` is enforced by procedure in
+`/review`, not by the harness.
 
 ## Security implications
 

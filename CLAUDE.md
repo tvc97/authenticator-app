@@ -76,9 +76,18 @@ Tiers run in order and stop at the first failure:
 4. `security` — secret-leak scan, entitlement check, pasteboard/log audit
 5. `runtime` — the app actually launched and the flow actually worked
 
-`./scripts/ai/flow verify <issue>` runs 1–4 and then runs the simulator runtime tier
-automatically. A **device** run is never automatic; no agent can plug in a phone. An issue
-labelled `device-required` records `runtime: SKIP` and that SKIP is the honest answer.
+`./scripts/ai/flow verify <issue>` runs 1–4 and then resolves runtime. Tier 5 means
+*launched **and** the flow worked*, so a launch alone earns `PASS` only when no app source
+changed — tooling work has no user flow to drive. An app-source change with no
+`.ai/scenarios/<issue>.sh` is `SKIP`.
+
+A **device** run is never automatic; no agent can plug in a phone. It is required by the
+`device-required` label **or** by a `manifest.yml: device_required_markers` hit in the diff,
+and it is satisfied only by a recorded `.ai/run/<issue>/device.yml`. The check fails closed:
+if the requirement cannot be determined, the answer is "device required".
+
+Before opening a PR: `./scripts/ai/flow precheck <issue>`. It re-checks evidence and runs
+`scope-check`, which has no other automatic caller now that CI is gone.
 
 `SKIP` and `PASS` are different values. Never write `PASS` for a tier that did not run.
 Simulator-verified and device-verified are different claims. Never collapse them.

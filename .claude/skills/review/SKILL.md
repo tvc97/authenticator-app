@@ -18,14 +18,16 @@ and `scope-check` and `flow` both read it. See ADR-002.
 If it prints `STALE` or any tier is `FAIL`/`SKIP`, stop. Do not open a PR, do not review.
 Re-run `./scripts/ai/flow verify <issue>` first. A review of an unverified diff is theatre.
 
-## 2. Scope check
+## 2. See which guarded paths the diff touches
 
 ```bash
 ./.ai/adapter/checks/scope-check origin/main <issue>
 ```
 
-On the first pass this will report `BLOCKED` for any `review_paths` touched — expected, since
-no verdict exists yet. Note which rules matched; the reviewer needs to know.
+Before a verdict exists this reports `BLOCKED` for any `review_paths` touched. That is the
+gate working, not noise — it is telling you which hunks the reviewer must read line by line.
+Note them. **Step 6 re-runs this check for real**, after the verdict is on disk; do not treat
+this first run as the enforcement.
 
 ## 3. Delegate to the `reviewer` subagent
 
@@ -61,12 +63,26 @@ Three rules, the same three that govern the evidence file:
 3. On `REQUEST_CHANGES`, every numbered item is addressed and the whole cycle repeats:
    verify → review. Do not argue with a finding you have not first verified against the code.
 
-## 5. Open the PR
+## 5. Re-run the gate, for real this time
 
-Only now, and only with evidence and verdict both fresh:
+```bash
+./scripts/ai/flow precheck <issue>
+```
+
+This re-checks that evidence is fresh and all-PASS, then runs `scope-check` against the
+verdict now on disk. Nothing else calls `scope-check` any more — the deleted CI job used to
+be its only automatic caller — so if this is skipped, the APPROVE requirement is enforced by
+nobody. It must print `precheck OK`.
+
+## 6. Open the PR
+
+Only after `precheck OK`:
 
 ```bash
 gh pr create --fill --body-file .github/pull_request_template.md
 ```
+
+Put the verdict and the reviewed commit in the PR body. `.ai/run/` is gitignored, so the PR
+is the only place the verdict leaves this machine.
 
 Then the state is `READY_TO_MERGE`. Confirm with `./scripts/ai/flow next <issue>`.
