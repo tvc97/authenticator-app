@@ -1,6 +1,10 @@
 #!/bin/sh
 # The orchestrator. Derives state from GitHub + git + evidence, and names the ONE legal next action.
 # State is never stored. Re-run any time; it is idempotent and resumable.
+#
+# Gates: the only states needing a human are the ones an agent physically cannot satisfy --
+# a question addressed to the human, a device that must be plugged in, and the release gate.
+# Everything else is derived from evidence on disk. See ADR-002.
 set -eu
 
 SELF=$(cd "$(dirname "$0")" && pwd)
@@ -18,6 +22,7 @@ usage: ./scripts/ai/flow <command> [issue]
   next [issue]      print the one legal next action
   verify <issue>    run the required tiers and write evidence
   evidence <issue>  print the evidence file and whether it is fresh
+  review <issue>    print the recorded cold-review verdict and whether it is fresh
   gates             show gate labels and whether they exist in the repo
 USAGE
 }
@@ -26,16 +31,31 @@ head_sha() { git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo "none"; }
 branch()   { b=$(git -C "$ROOT" symbolic-ref --short HEAD 2>/dev/null) && [ -n "$b" ] && printf '%s\n' "$b" || printf 'none\n'; }
 
 evidence_file() { printf '%s/%s/evidence.yml' "$RUNDIR" "$1"; }
+review_file()   { printf '%s/%s/review.yml'   "$RUNDIR" "$1"; }
+
+yval() { awk -F': *' -v k="$2" '$0 ~ "^"k":" {print $2; exit}' "$1" 2>/dev/null | tr -d ' \r'; }
 
 evidence_fresh() {
   f=$(evidence_file "$1"); [ -f "$f" ] || return 1
-  c=$(awk -F': *' '/^commit:/{print $2}' "$f" | tr -d ' ')
-  [ "$c" = "$(head_sha)" ]
+  [ "$(yval "$f" commit)" = "$(head_sha)" ]
 }
 
 evidence_all_pass() {
   f=$(evidence_file "$1"); [ -f "$f" ] || return 1
   ! awk '/^tiers:/{t=1;next} t && /^[a-z]/{t=0} t' "$f" | grep -qE ':[[:space:]]*(FAIL|SKIP)'
+}
+
+review_fresh() {
+  f=$(review_file "$1"); [ -f "$f" ] || return 1
+  [ "$(yval "$f" commit)" = "$(head_sha)" ]
+}
+
+review_verdict() { f=$(review_file "$1"); [ -f "$f" ] && yval "$f" verdict || echo ""; }
+
+# An issue labelled device-required cannot have its runtime tier satisfied by this machine.
+needs_device() {
+  have_gh || return 1
+  gh issue view "$1" --json labels --jq '.labels[].name' 2>/dev/null | grep -qx "device-required"
 }
 
 derive() {
@@ -47,7 +67,10 @@ derive() {
 
   if ! have_gh; then
     if [ "$(branch)" = "main" ]; then echo "READY_TO_START"; else
-      if evidence_fresh "$issue" && evidence_all_pass "$issue"; then echo "AWAITING_REVIEW(offline)"; else echo "IMPLEMENTING(offline)"; fi
+      if evidence_fresh "$issue" && evidence_all_pass "$issue"; then
+        review_fresh "$issue" && [ "$(review_verdict "$issue")" = "APPROVE" ] \
+          && echo "READY_TO_MERGE(offline)" || echo "AWAITING_REVIEW(offline)"
+      else echo "IMPLEMENTING(offline)"; fi
     fi
     return
   fi
@@ -56,28 +79,26 @@ derive() {
   closed=$(printf '%s' "$st" | jq -r '.state')
   labels=$(printf '%s' "$st" | jq -r '.labels[].name' | tr '\n' ' ')
 
-  pr=$(gh pr list --search "$issue in:body" --json number,reviewDecision,statusCheckRollup --limit 1 2>/dev/null || echo '[]')
-  prnum=$(printf '%s' "$pr" | jq -r '.[0].number // empty')
-
   case " $labels " in *" needs:clarification "*) echo "BLOCKED_NEEDS_CLARIFICATION"; return ;; esac
   [ "$closed" = "CLOSED" ] && { echo "COMPLETE"; return; }
 
   case " $labels " in
-    *" gate:plan-approved "*) : ;;
-    *) case " $labels " in *" has:plan "*) echo "AWAITING_PLAN_APPROVAL"; return ;;
-                            *) echo "RESEARCH"; return ;; esac ;;
+    *" has:plan "*) : ;;
+    *) echo "RESEARCH"; return ;;
   esac
+
+  pr=$(gh pr list --search "$issue in:body" --json number --limit 1 2>/dev/null || echo '[]')
+  prnum=$(printf '%s' "$pr" | jq -r '.[0].number // empty')
 
   [ -z "$prnum" ] && {
     git -C "$ROOT" show-ref --verify --quiet "refs/heads/$(git -C "$ROOT" branch --list "*/$issue-*" | head -1 | tr -d ' *')" 2>/dev/null \
       && echo "IMPLEMENTING" || echo "READY_TO_START"; return; }
 
   if ! evidence_fresh "$issue" || ! evidence_all_pass "$issue"; then echo "VERIFYING"; return; fi
-  rd=$(printf '%s' "$pr" | jq -r '.[0].reviewDecision // empty')
-  checks=$(printf '%s' "$pr" | jq -r '[.[0].statusCheckRollup[]?.conclusion] | if length==0 then "NONE" elif all(.=="SUCCESS") then "GREEN" else "RED" end')
-  case "$rd" in
-    CHANGES_REQUESTED) echo "CHANGES_REQUIRED" ;;
-    APPROVED) [ "$checks" = "GREEN" ] && echo "READY_TO_MERGE" || echo "VERIFYING(ci:$checks)" ;;
+
+  case "$(review_verdict "$issue")" in
+    REQUEST_CHANGES) echo "CHANGES_REQUIRED" ;;
+    APPROVE) review_fresh "$issue" && echo "READY_TO_MERGE" || echo "AWAITING_REVIEW(stale)" ;;
     *) echo "AWAITING_REVIEW" ;;
   esac
 }
@@ -86,8 +107,7 @@ next_action() {
   case "$1" in
     INTAKE)                     echo "/intake  — describe the change; an issue with acceptance criteria gets created" ;;
     RESEARCH)                   echo "/preflight $2 then /plan $2  — read the ledger, then write the plan" ;;
-    AWAITING_PLAN_APPROVAL)     echo "HUMAN: review the plan, then: gh issue edit $2 --add-label gate:plan-approved" ;;
-    READY_TO_START)             echo "/implement $2  — creates worktree + branch, then implements the approved plan" ;;
+    READY_TO_START)             echo "/implement $2  — creates worktree + branch, then implements the plan" ;;
     IMPLEMENTING*)              echo "/implement $2  — continue; verify after each small step" ;;
     VERIFYING*)                 echo "./scripts/ai/flow verify $2  — run tiers and write evidence" ;;
     AWAITING_REVIEW*)           echo "/review $2  — cold reviewer subagent, no implementation context" ;;
@@ -108,20 +128,39 @@ cmd_verify() {
   for tier in $(mlist tiers); do
     [ "$tier" = runtime ] && continue
     if [ "$status" = PASS ]; then
-      if sh "$ADAPTER/$tier" >"$d/$tier.log" 2>&1; then r=PASS; else r=FAIL; status=FAIL; fi
+      if sh "$ADAPTER/$tier" "$issue" >"$d/$tier.log" 2>&1; then r=PASS; else r=FAIL; status=FAIL; fi
     else r=SKIP; fi
     printf '  %-12s %s\n' "$tier:" "$r" >> "$d/tiers.tmp"
     printf '%-12s %s\n' "$tier" "$r"
   done
-  printf '  %-12s %s\n' "runtime:" "SKIP" >> "$d/tiers.tmp"
-  printf '%-12s %s  (run ./.ai/adapter/run sim and record it)\n' "runtime" "SKIP"
+
+  # Runtime. The simulator run is automatic; a device run is not, because no agent can plug
+  # in a phone. Those stay SKIP and stay listed under unverified -- deliberately.
+  rt_target=none; rt_device=""
+  if [ "$status" != PASS ]; then
+    rt=SKIP; rt_reason="earlier tier failed"
+  elif needs_device "$issue"; then
+    rt=SKIP; rt_reason="issue is labelled device-required; a physical device run cannot be automated"
+  elif ISSUE="$issue" sh "$ADAPTER/run" sim >"$d/runtime-tier.log" 2>&1; then
+    rt=PASS; rt_target=sim
+    rt_device="$(mval simulator.name) / $(mval simulator.runtime) (reality: simulated)"
+    rt_reason=""
+  else
+    rt=FAIL; status=FAIL; rt_reason="see .ai/run/$issue/runtime-tier.log"
+  fi
+  printf '  %-12s %s\n' "runtime:" "$rt" >> "$d/tiers.tmp"
+  printf '%-12s %s\n' "runtime" "$rt"
 
   {
     printf 'issue: %s\ncommit: %s\nstarted: %s\nduration_s: %s\n\ntiers:\n' \
       "$issue" "$(head_sha)" "$start" "$(( $(date +%s) - t0 ))"
     cat "$d/tiers.tmp"
-    printf '\nruntime:\n  target: none\n  scenarios: []\n\nunverified:\n'
+    printf '\nruntime:\n  target: %s\n' "$rt_target"
+    [ -n "$rt_device" ] && printf '  device: "%s"\n' "$rt_device"
+    printf '  scenarios: []\n\nunverified:\n'
     awk '$2 != "PASS" { sub(/:$/, "", $1); printf "  - id: %s\n    reason: \"tier reported %s\"\n", $1, $2 }' "$d/tiers.tmp"
+    [ "$rt" = PASS ] && printf '  - id: runtime-scenarios\n    reason: "launch and log secret audit only; no user flow was driven"\n'
+    [ -n "$rt_reason" ] && printf '  - id: runtime-detail\n    reason: "%s"\n' "$rt_reason"
     printf '\nadapter:\n  platform: %s\n  xcode: "%s"\n  simulator: "%s / %s"\n' \
       "$(mval platform)" "$(mval toolchain.xcode)" "$(mval simulator.name)" "$(mval simulator.runtime)"
   } > "$d/evidence.yml"
@@ -137,7 +176,9 @@ case "${1:-}" in
   verify)   [ -n "${2:-}" ] || { usage; exit 1; }; cmd_verify "$2" ;;
   evidence) f=$(evidence_file "${2:?issue required}"); [ -f "$f" ] || die "no evidence for #$2"
             cat "$f"; evidence_fresh "$2" && ok "fresh (matches HEAD)" || die "STALE — HEAD moved since verification" ;;
-  gates)    for l in gate:plan-approved gate:release-approved needs:clarification has:plan; do
+  review)   f=$(review_file "${2:?issue required}"); [ -f "$f" ] || die "no cold review for #$2 — run /review $2"
+            cat "$f"; review_fresh "$2" && ok "fresh (matches HEAD)" || die "STALE — HEAD moved since review" ;;
+  gates)    for l in gate:release-approved needs:clarification has:plan device-required; do
               if have_gh && gh label list --json name --jq '.[].name' 2>/dev/null | grep -qx "$l"; then ok "$l"; else printf '  MISSING  %s\n' "$l"; fi
             done
             have_gh || warn "gh not authenticated — cannot check labels" ;;

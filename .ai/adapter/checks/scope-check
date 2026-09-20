@@ -1,18 +1,76 @@
 #!/bin/sh
-# Assert the diff stayed inside the plan, and touched no frozen path.
-# usage: scope-check <base-ref>
+# Assert the diff touched no human-only path, and that any review_path change carries a
+# recorded APPROVE from the cold reviewer.
+# usage: scope-check <base-ref> [issue]
 . "$(dirname "$0")/../common.sh"
+# Patterns from the manifest are handled as text. Without -f the shell expands an unquoted
+# "**/Crypto/**" against the working tree and reports files instead of the rule that matched.
+set -f
 base=${1:-origin/main}
 git -C "$ROOT" rev-parse --verify HEAD >/dev/null 2>&1 || { warn "no commits yet — scope check skipped"; exit 0; }
 git -C "$ROOT" rev-parse --verify "$base" >/dev/null 2>&1 || { warn "base ref '$base' not found — scope check skipped"; exit 0; }
 changed=$(git -C "$ROOT" diff --name-only "$base"...HEAD)
 [ -n "$changed" ] || { ok "no changes"; exit 0; }
 
-say "frozen path check"
+issue=${2:-}
+if [ -z "$issue" ]; then
+  b=$(git -C "$ROOT" symbolic-ref --short HEAD 2>/dev/null || echo "")
+  issue=$(printf '%s' "$b" | sed -n 's|^[a-z]*/\([0-9]\{1,\}\)-.*|\1|p')
+fi
+
+# pat_hits <glob> -> the changed files matching it, empty if none
+pat_hits() {
+  glob=$(printf '%s' "$1" | sed 's|\*\*/||g; s|\*|.*|g')
+  printf '%s\n' "$changed" | grep -E "$glob" 2>/dev/null || true
+}
+
+say "human-only path check"
 hit=0
-for pat in $(mlist frozen_paths); do
-  glob=$(printf '%s' "$pat" | sed 's|\*\*/||g; s|\*|.*|g')
-  printf '%s\n' "$changed" | grep -E "$glob" >/dev/null 2>&1 && { printf '\033[31m  FROZEN\033[0m %s\n' "$pat"; hit=1; }
+for pat in $(mlist human_paths); do
+  files=$(pat_hits "$pat")
+  if [ -n "$files" ]; then
+    printf '\033[31m  HUMAN\033[0m %s\n' "$pat"
+    printf '           %s\n' $files
+    hit=1
+  fi
 done
-[ "$hit" -eq 0 ] && ok "no frozen paths touched" || die "frozen paths modified — this requires explicit human review.
-  Frozen paths hold crypto, Keychain, entitlements and the workflow's own guards."
+[ "$hit" -eq 0 ] && ok "no human-only paths touched" || die "human-only paths modified.
+  Entitlements and Info.plist are the app's capability boundary. An agent cannot edit
+  them: settings.json denies it and pre-tool-safety.sh blocks it. A human makes this
+  change in Xcode, with an ADR recording why."
+
+say "review-required path check"
+touched=""
+for pat in $(mlist review_paths); do
+  [ -n "$(pat_hits "$pat")" ] && touched="$touched $pat"
+done
+
+if [ -z "$touched" ]; then
+  ok "no review-required paths touched"
+  exit 0
+fi
+printf '  REVIEW  %s\n' $touched
+
+[ -n "$issue" ] || die "review-required paths touched, but no issue could be derived from
+  the branch name. Expected '<type>/<issue>-<slug>', e.g. feature/12-qr-import.
+  Fix: rename the branch, or pass it: scope-check $base <issue>"
+
+rv="$RUNDIR/$issue/review.yml"
+[ -f "$rv" ] || die "review-required paths touched, but no cold review is on record.
+  Missing: .ai/run/$issue/review.yml
+  Fix: /review $issue   # delegates to the reviewer subagent, which writes the verdict"
+
+verdict=$(awk -F': *' '/^verdict:/{print $2}' "$rv" | tr -d ' \r')
+rcommit=$(awk -F': *' '/^commit:/{print $2}' "$rv" | tr -d ' \r')
+head=$(git -C "$ROOT" rev-parse --short HEAD)
+
+[ "$verdict" = "APPROVE" ] || die "cold review verdict is '$verdict', not APPROVE.
+  The numbered items are in .ai/run/$issue/review.yml
+  Fix: address every item, re-run flow verify, then /review $issue again."
+
+[ "$rcommit" = "$head" ] || die "cold review is STALE.
+  reviewed: $rcommit
+  HEAD:     $head
+  A commit landed after the review. Re-run: /review $issue"
+
+ok "cold review APPROVE on $head"

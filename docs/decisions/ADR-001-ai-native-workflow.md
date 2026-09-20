@@ -1,6 +1,6 @@
 # ADR-001: Operate this repository as an AI-native development system
 
-Status: accepted
+Status: accepted — amended by ADR-002
 Date: 2026-09-20
 
 ## Context
@@ -14,6 +14,8 @@ project memory, and a model's assertion that something works is not evidence.
 - **GitHub is the only state store.** Workflow state is derived from issues, labels,
   branches, PRs and checks. No state file is committed.
 - **Gates are labels**, not prose: `gate:plan-approved`, `gate:release-approved`.
+  *(ADR-002 removed `gate:plan-approved`: a gate now exists only where the agent physically
+  cannot act. `gate:release-approved` remains.)*
 - **Completion is an evidence file** (`.ai/run/<issue>/evidence.yml`) whose `commit`
   matches HEAD, with every required tier `PASS`. A Stop hook enforces this.
 - **Commands live in an adapter** (`.ai/adapter/`), eight verbs, with project facts in

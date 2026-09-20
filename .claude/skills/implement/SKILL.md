@@ -1,11 +1,12 @@
 ---
 name: implement
-description: Implement an approved plan in an isolated worktree, verifying after each small step. Use only after the gate:plan-approved label exists on the issue.
+description: Implement a plan in an isolated worktree, verifying after each small step. Use once the issue carries has:plan.
 ---
 
 # Implement
 
-Precondition: `gh issue view <issue> --json labels` contains `gate:plan-approved`. If not, stop.
+Precondition: the issue carries `has:plan`. If not, run `/plan <issue>` first.
+No human approval step — see ADR-002.
 
 1. **Isolate** — one issue, one worktree, one branch:
    ```bash
@@ -26,6 +27,12 @@ Precondition: `gh issue view <issue> --json labels` contains `gate:plan-approved
 Authenticator rules that override convenience:
 - A seed goes to the Keychain and nowhere else. Not a log, not a plist, not a breadcrumb.
 - Do not add a dependency. If you believe you must, stop and propose an ADR.
-- Do not touch a `frozen_paths` entry. If the change requires it, stop and ask.
+- `manifest.yml: human_paths` (entitlements, Info.plist) cannot be edited at all — the
+  settings deny list and `pre-tool-safety.sh` both block it. If the change needs one, stop
+  and say so; a human makes it in Xcode with an ADR.
+- `manifest.yml: review_paths` (Crypto, Keychain, Backup, the adapter, the hooks) may be
+  changed, but `scope-check` will refuse the PR until `/review <issue>` records APPROVE
+  against the current HEAD. Budget for that round trip; do not leave it to the end.
 
-Finish by running `./scripts/ai/flow verify <issue>`. Completion is the evidence file, not your opinion.
+Finish by running `./scripts/ai/flow verify <issue>`. Completion is the evidence file, not
+your opinion. There is no CI to catch what you skipped — the tiers run here or nowhere.

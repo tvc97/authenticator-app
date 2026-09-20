@@ -24,7 +24,7 @@ Read these in order:
 | File | What it answers |
 |---|---|
 | `CLAUDE.md` | The rules Claude must follow |
-| `.ai/adapter/manifest.yml` | Project facts (scheme, simulator, frozen paths) |
+| `.ai/adapter/manifest.yml` | Project facts (scheme, simulator, human/review paths) |
 | `docs/testing/security-matrix.md` | What an authenticator must prove before shipping |
 | `docs/release/checklist.md` | How a release is gated |
 | `.ai/ledger/` | What this project has already learned |

@@ -9,6 +9,9 @@ on_exceed: stop_and_report        # never: keep_trying
 escalate_to_human_when:
   - "the same tier fails 3 times with different attempted fixes"
   - "the diff exceeds the plan's file list by more than 30%"
-  - "any path in manifest.yml frozen_paths is touched"
+  - "any path in manifest.yml human_paths is touched"
   - "a security tier check fails"
   - "signing, entitlements or bundle id would change"
+
+# review_paths are deliberately NOT here. They escalate to the cold reviewer, not to the
+# human, and the verdict is recorded in .ai/run/<issue>/review.yml. See ADR-002.

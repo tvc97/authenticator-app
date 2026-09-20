@@ -33,7 +33,14 @@ gh issue comment <issue> --body-file plan.md
 gh issue edit <issue> --add-label has:plan
 ```
 
-Stop. State: `AWAITING_PLAN_APPROVAL`. A human adds `gate:plan-approved`.
-Do not create a branch before that label exists.
+The `has:plan` label is the whole gate. Nobody approves it — the plan is on the issue, so it
+is already reviewable, and the PR is where it gets checked against the diff. Go straight to
+`/implement <issue>`.
 
-If research was inconclusive, do not write a speculative plan — report `BLOCKED` with what is missing.
+What makes this safe is not an approver. It is that **the plan is a commitment the reviewer
+checks the diff against** — especially `## Files explicitly NOT to modify`. A plan written
+loosely enough to permit anything gates nothing. Write it to be falsifiable.
+
+If research was inconclusive, do not write a speculative plan — report `BLOCKED` with what is
+missing, and add `needs:clarification`. That label is a real stop: a question addressed to the
+human is the one thing no amount of evidence can answer.
