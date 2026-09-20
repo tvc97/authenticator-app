@@ -46,6 +46,15 @@ base_ref() {
       die "BASE_REF='$BASE_REF' already contains HEAD. The diff would be empty and every
   path and marker check would pass vacuously. Set it to the branch this one merges INTO."
     fi
+    # Mirror of the same hole: BASE_REF=HEAD~1 does not contain HEAD, but it drops whatever
+    # that commit changed from every path and marker check. Require a named ref.
+    _cur=$(git -C "$ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || echo "")
+    _named=$(git -C "$ROOT" for-each-ref --format='%(refname:short)' \
+               --points-at "$(git -C "$ROOT" rev-parse "$BASE_REF")" 2>/dev/null \
+             | grep -vx "$_cur" || true)
+    [ -n "$_named" ] || die "BASE_REF='$BASE_REF' is not the tip of any branch other than
+  this one. A bare commit such as HEAD~1 excludes what it changed from every check.
+  Fix: name the branch this one merges into, e.g. BASE_REF=origin/main."
     printf '%s\n' "$BASE_REF"; return
   fi
   for _br in origin/main main; do

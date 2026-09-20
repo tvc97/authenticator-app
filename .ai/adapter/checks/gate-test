@@ -187,5 +187,30 @@ sed 's/^human_paths:/frozen_paths:/' "$REPO/.ai/adapter/manifest.yml" > "$TMP/wt
 run_check
 refuses "unreadable human_paths list fails closed" "no human_paths list"
 
+# 13. A bare commit as an explicit base drops whatever that commit changed. BASE_REF=HEAD~1
+#     does not contain HEAD, so the ancestor guard alone lets it through, and the Info.plist
+#     commit it excludes never reaches a rule.
+setup
+commit_file "authenticator/Info.plist" "x"
+commit_file "docs/harmless.md" "y"
+for b in HEAD~1 "$(git -C "$TMP/wt" rev-parse HEAD~1)"; do
+  if ( cd "$TMP/wt" && BASE_REF="$b" ./.ai/adapter/checks/scope-check main 99 ) >/dev/null 2>&1; then
+    red "BASE_REF=$b must not hide the Info.plist commit"
+  else
+    green "bare-commit base '$b' is refused"
+  fi
+done
+
+# 14. Every review_paths entry is enforced, not just the two the earlier cases happened to
+#     exercise. Same code path, but an entry silently dropped from the manifest would
+#     otherwise go unnoticed.
+for f in "authenticator/Keychain/Store.swift" "authenticator/Backup/Export.swift" \
+         "scripts/ai/helper.sh" ".github/dependabot.yml"; do
+  setup
+  commit_file "$f" "x"
+  run_check
+  refuses "review_path $f needs a verdict" "no cold review is on record"
+done
+
 printf '\033[1m==>\033[0m %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1

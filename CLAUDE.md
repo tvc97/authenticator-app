@@ -42,11 +42,13 @@ Keychain. These are not style preferences; they are correctness requirements.
 - Crypto is HMAC/base32 from a reviewed implementation. Do not hand-roll, do not "optimize".
 - `manifest.yml: human_paths` (entitlements, `Info.plist`, `.claude/hooks/**`,
   `.claude/settings.json`) are not an agent's to change. A human changes these, with an ADR.
-  Know what actually enforces that, because the layers differ per path:
-  `pre-tool-safety.sh` blocks entitlements, `Info.plist` and credential files at the tool
-  layer, whatever tool is used; the `settings.json` deny list blocks the **Edit tool** on
-  `.claude/hooks/**` and `.claude/settings.json`, but not `git rm` or a shell heredoc.
-  `scope-check`'s `human_paths` rule is the backstop that catches all of them in the diff.
+  Know what actually enforces that, because every tool-layer block has the same gap:
+  `pre-tool-safety.sh` reads `file_path`, so it blocks `Edit`, `Write` and `NotebookEdit`
+  on entitlements, `Info.plist` and credential files — but `file_path` is empty for `Bash`,
+  so a shell redirect walks past it. The `settings.json` deny list blocks the **Edit tool**
+  on `.claude/hooks/**` and `.claude/settings.json`, and likewise not `git rm` or a heredoc.
+  **`scope-check`'s `human_paths` rule is the only layer that sees all of them**, because it
+  reads the diff rather than the tool call. Do not read a gap in the tool blocks as permission.
 - `manifest.yml: review_paths` (Crypto, Keychain, Backup, `.ai/adapter/**`, `scripts/ai/**`,
   `.github/**`) may be changed, but the change is not done until `/review` records
   `verdict: APPROVE` against the current HEAD in `.ai/run/<issue>/review.yml`.

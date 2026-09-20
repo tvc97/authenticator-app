@@ -33,6 +33,23 @@ if [ "$base_explicit" = yes ] \
   would pass vacuously. That is the gate switching itself off, not a clean branch.
   Fix: set BASE_REF to the branch this one will actually merge INTO."
 fi
+# An explicit base must be the TIP OF A REF other than the current branch.
+#
+# The ancestor check above only asks "does the base contain HEAD". It never asks the mirror
+# question, so BASE_REF=HEAD~1 quietly drops the commit that touched a guarded path and
+# every rule below passes. Requiring a named ref kills HEAD~n and raw SHAs while leaving
+# the stacked-branch case (BASE_REF=<parent branch>) working.
+if [ "$base_explicit" = yes ]; then
+  _cur=$(git -C "$ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || echo "")
+  _named=$(git -C "$ROOT" for-each-ref --format='%(refname:short)' \
+             --points-at "$(git -C "$ROOT" rev-parse "$base")" 2>/dev/null \
+           | grep -vx "$_cur" || true)
+  [ -n "$_named" ] || die "base ref '$base' is not the tip of any branch other than the one
+  being checked. A bare commit such as HEAD~1 silently excludes whatever that commit
+  changed, which is how a guarded path reaches main with the gate green.
+  Fix: name the branch this one merges into, e.g. BASE_REF=origin/main."
+fi
+
 # --no-renames is load-bearing. With rename detection on, moving Sources/Crypto/HMAC.swift
 # to Sources/Util/HMAC.swift reports ONLY the destination, so no rule matches and crypto
 # walks out of a guarded directory unreviewed. Without it, both paths are reported.

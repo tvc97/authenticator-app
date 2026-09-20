@@ -134,13 +134,20 @@ Bad, and accepted deliberately:
 
 **Outstanding, and both need the human.**
 
-**What actually enforces `human_paths` differs per path, and the rules files used to
-overstate it.** `pre-tool-safety.sh` blocks entitlements, `Info.plist` and credential files
-at the tool layer whatever tool is used. The `settings.json` deny list blocks only the
-**Edit tool** on `.claude/hooks/**` and `.claude/settings.json` — `git rm` and a shell
-heredoc go straight past it. `scope-check`'s `human_paths` rule is the one backstop that
-sees all of them, because it reads the diff rather than the tool call. Stating otherwise in
-CLAUDE.md was worse than saying nothing: it described protection that is not there.
+**Every tool-layer block has the same gap, and the rules files twice overstated it.**
+`pre-tool-safety.sh` matches on `tool_input.file_path`, which is populated for `Edit`,
+`Write` and `NotebookEdit` and **empty for `Bash`**. So it blocks a `Write` to `Info.plist`
+and allows `printf x > authenticator/Info.plist`; its `cmd` list covers credentials, force
+push, `security`, publishing and `codesign`, but not a redirect. The `settings.json` deny
+list has the same shape one level up: it blocks the Edit tool on `.claude/hooks/**` and
+`.claude/settings.json`, and `git rm` goes straight past it — as this PR demonstrated by
+deleting `ci.yml` that way.
+
+`scope-check`'s `human_paths` rule is therefore the **only** layer that sees all of them,
+because it reads the diff rather than the tool call. The first draft of this paragraph said
+the hook blocked those paths "whatever tool is used", which was false and exactly the kind
+of claim it exists to prevent — a rules file describing protection that is not there is
+worse than one describing none, because it is read as permission to stop checking.
 
 `.claude/settings.json` denies `Edit(./.github/workflows/**)`, while the manifest puts
 `.github/**` in `review_paths`. That looks like the inconsistency this ADR calls
