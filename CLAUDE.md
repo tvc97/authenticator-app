@@ -41,8 +41,12 @@ Keychain. These are not style preferences; they are correctness requirements.
 - Biometric/passcode gate is a security boundary, not a UI state. Changing it requires an ADR.
 - Crypto is HMAC/base32 from a reviewed implementation. Do not hand-roll, do not "optimize".
 - `manifest.yml: human_paths` (entitlements, `Info.plist`, `.claude/hooks/**`,
-  `.claude/settings.json`) cannot be edited by an agent at all. The settings deny list and
-  `pre-tool-safety.sh` both block them. A human changes these, with an ADR.
+  `.claude/settings.json`) are not an agent's to change. A human changes these, with an ADR.
+  Know what actually enforces that, because the layers differ per path:
+  `pre-tool-safety.sh` blocks entitlements, `Info.plist` and credential files at the tool
+  layer, whatever tool is used; the `settings.json` deny list blocks the **Edit tool** on
+  `.claude/hooks/**` and `.claude/settings.json`, but not `git rm` or a shell heredoc.
+  `scope-check`'s `human_paths` rule is the backstop that catches all of them in the diff.
 - `manifest.yml: review_paths` (Crypto, Keychain, Backup, `.ai/adapter/**`, `scripts/ai/**`,
   `.github/**`) may be changed, but the change is not done until `/review` records
   `verdict: APPROVE` against the current HEAD in `.ai/run/<issue>/review.yml`.

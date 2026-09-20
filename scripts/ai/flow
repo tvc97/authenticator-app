@@ -51,7 +51,12 @@ base_ref() {
   for _br in origin/main main; do
     git -C "$ROOT" rev-parse --verify "$_br" >/dev/null 2>&1 && { printf '%s\n' "$_br"; return; }
   done
-  printf 'HEAD\n'
+  # Never fall back to HEAD. That empties every diff, which makes touches_app_sources
+  # false and hands any change a runtime PASS of "none-required". scope-check may skip a
+  # comparison it cannot make; flow is making a verification CLAIM and must not.
+  die "no base branch found (looked for origin/main, main).
+  flow cannot judge what this branch changed without one, and it will not assume 'nothing'.
+  Fix: git fetch origin, or set BASE_REF to the branch this one merges into."
 }
 
 # --no-renames: see the comment in .ai/adapter/checks/scope-check. A rename out of a guarded
@@ -302,6 +307,16 @@ cmd_precheck() {
   evidence_fresh "$issue" || die "evidence for #$issue is missing or STALE — run: ./scripts/ai/flow verify $issue"
   evidence_all_pass "$issue" || die "evidence for #$issue has a tier that is not PASS — see .ai/run/$issue/evidence.yml"
   ok "evidence fresh and all-PASS"
+
+  # The evidence was computed against SOME base. If precheck resolves a different one, the
+  # tiers answered a different question than the gate is about to ask -- most visibly after
+  # the parent of a stacked branch merges, which moves origin/main under a recorded base.
+  _pb=$(yval "$(evidence_file "$issue")" base | sed 's/@.*//')
+  _cb=$(base_ref)
+  [ -z "$_pb" ] || [ "$_pb" = "$_cb" ] || die "evidence for #$issue was verified against
+  base '$_pb', but precheck resolves '$_cb'. The tiers answered a different question.
+  Fix: re-run ./scripts/ai/flow verify $issue against the base this PR will target."
+  ok "base agrees with the evidence: $_cb"
   sh "$ADAPTER/checks/scope-check" "$(base_ref)" "$issue" || exit 1
   ok "precheck OK — a PR may be opened"
 }

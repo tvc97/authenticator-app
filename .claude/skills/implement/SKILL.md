@@ -28,8 +28,10 @@ Authenticator rules that override convenience:
 - A seed goes to the Keychain and nowhere else. Not a log, not a plist, not a breadcrumb.
 - Do not add a dependency. If you believe you must, stop and propose an ADR.
 - `manifest.yml: human_paths` (entitlements, `Info.plist`, `.claude/hooks/**`,
-  `.claude/settings.json`) cannot be edited at all — the settings deny list and
-  `pre-tool-safety.sh` both block them. If the change needs one, stop and say so.
+  `.claude/settings.json`) are not yours to change. If the change needs one, stop and say
+  so. Do not treat a gap in the tool-layer blocks as permission: `pre-tool-safety.sh`
+  covers entitlements, `Info.plist` and credentials only, and the `settings.json` deny
+  list covers the Edit tool only — `scope-check` catches the rest in the diff regardless.
 - `manifest.yml: review_paths` (Crypto, Keychain, Backup, `.ai/adapter/**`,
   `scripts/ai/**`, `.github/**`) may be changed, but `scope-check` refuses the PR until
   `/review <issue>` records APPROVE against the current HEAD. Budget for that round trip;

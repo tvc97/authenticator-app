@@ -134,6 +134,14 @@ Bad, and accepted deliberately:
 
 **Outstanding, and both need the human.**
 
+**What actually enforces `human_paths` differs per path, and the rules files used to
+overstate it.** `pre-tool-safety.sh` blocks entitlements, `Info.plist` and credential files
+at the tool layer whatever tool is used. The `settings.json` deny list blocks only the
+**Edit tool** on `.claude/hooks/**` and `.claude/settings.json` — `git rm` and a shell
+heredoc go straight past it. `scope-check`'s `human_paths` rule is the one backstop that
+sees all of them, because it reads the diff rather than the tool call. Stating otherwise in
+CLAUDE.md was worse than saying nothing: it described protection that is not there.
+
 `.claude/settings.json` denies `Edit(./.github/workflows/**)`, while the manifest puts
 `.github/**` in `review_paths`. That looks like the inconsistency this ADR calls
 unacceptable, and the classification is deliberate: the criterion is *can an agent satisfy
