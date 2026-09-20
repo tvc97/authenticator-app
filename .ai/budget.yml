@@ -1,0 +1,14 @@
+# Ceilings for one issue's automated run. Exceeding a ceiling stops and reports.
+per_issue:
+  usd: 5.00
+  wall_clock_min: 45
+  verify_retries: 3
+
+on_exceed: stop_and_report        # never: keep_trying
+
+escalate_to_human_when:
+  - "the same tier fails 3 times with different attempted fixes"
+  - "the diff exceeds the plan's file list by more than 30%"
+  - "any path in manifest.yml frozen_paths is touched"
+  - "a security tier check fails"
+  - "signing, entitlements or bundle id would change"

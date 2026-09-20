@@ -1,0 +1,66 @@
+#!/bin/sh
+# Tier 4: authenticator-specific secret-safety audit.
+# These are correctness checks, not style. A failure here is a shippable vulnerability.
+. "$(dirname "$0")/common.sh"
+
+say "security: static secret-leak audit"
+cd "$ROOT"
+src=$(git ls-files '*.swift' 2>/dev/null || true)
+fail=0
+flag() { printf '\033[31m  FAIL\033[0m %s\n' "$1"; fail=1; }
+
+if [ -n "$src" ]; then
+  # 1. Secrets must never reach UserDefaults or a plist.
+  if printf '%s\n' "$src" | xargs grep -nE 'UserDefaults.*(secret|seed|otpauth|totp|key)' -i 2>/dev/null; then
+    flag "TOTP material referenced near UserDefaults (must be Keychain)"
+  else ok "no secret material in UserDefaults"; fi
+
+  # 2. Secrets must never be printed or logged.
+  if printf '%s\n' "$src" | xargs grep -nE '(print|NSLog|os_log|debugPrint|dump)\(.*(secret|seed|otpauth|sharedSecret|base32|code)' -i 2>/dev/null; then
+    flag "secret or generated code passed to a logging call"
+  else ok "no secret material in log calls"; fi
+
+  # 3. Keychain accessibility must be the this-device-only class.
+  if printf '%s\n' "$src" | grep -q . && printf '%s\n' "$src" | xargs grep -l 'kSecAttrAccessible' >/dev/null 2>&1; then
+    if printf '%s\n' "$src" | xargs grep -nE 'kSecAttrAccessible(Always|AfterFirstUnlock)([^T]|$)' 2>/dev/null; then
+      flag "weak Keychain accessibility class (want WhenUnlockedThisDeviceOnly)"
+    else ok "Keychain accessibility class"; fi
+  else warn "no kSecAttrAccessible found yet (SKIP, not PASS)"; fi
+
+  # 4. Pasteboard writes must expire and must not sync.
+  if printf '%s\n' "$src" | xargs grep -ln 'UIPasteboard' 2>/dev/null >/dev/null; then
+    if printf '%s\n' "$src" | xargs grep -A4 'UIPasteboard' 2>/dev/null | grep -q 'expirationDate'; then
+      ok "pasteboard writes set an expiry"
+    else flag "UIPasteboard used without expirationDate (code persists and may sync)"; fi
+  else ok "no pasteboard use"; fi
+
+  # 5. No hard-coded test seeds outside test targets.
+  if printf '%s\n' "$src" | grep -v -i 'tests\?/' | xargs grep -nE '"[A-Z2-7]{16,}"' 2>/dev/null; then
+    flag "possible hard-coded base32 secret in app sources"
+  else ok "no hard-coded base32 in app sources"; fi
+else
+  warn "no Swift sources yet — audit skipped (SKIP, not PASS)"
+fi
+
+say "security: entitlements and capabilities"
+ent=$(git ls-files '*.entitlements' 2>/dev/null || true)
+if [ -n "$ent" ]; then
+  printf '%s\n' "$ent" | while read -r e; do printf '     %s\n' "$e"; done
+  if printf '%s\n' "$ent" | xargs grep -l 'com.apple.developer.icloud' >/dev/null 2>&1; then
+    warn "iCloud entitlement present — seeds must not sync unless an ADR approves it"
+  fi
+  ok "entitlements enumerated"
+else
+  warn "no entitlements file yet (SKIP)"
+fi
+
+say "security: dependency surface"
+if [ -f Package.resolved ] || [ -f "$(mval project.path)/project.xcworkspace/xcshareddata/swiftpm/Package.resolved" ]; then
+  n=$(find . -name Package.resolved -not -path './.git/*' -exec jq -r '.pins[]?.identity' {} \; 2>/dev/null | sort -u | wc -l | tr -d ' ')
+  ok "$n third-party package(s); each one is attack surface — ADR required to add"
+else
+  ok "no third-party packages (best case for an authenticator)"
+fi
+
+[ "$fail" -eq 0 ] || die "security audit failed — see FAIL lines above"
+say "security OK"

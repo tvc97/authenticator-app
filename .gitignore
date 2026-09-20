@@ -1,0 +1,35 @@
+# --- AI workflow: derived, never committed ---
+.ai/run/
+
+# --- Xcode ---
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# --- SPM ---
+.build/
+.swiftpm/
+Package.resolved.local
+
+# --- secrets: never commit ---
+*.p8
+*.p12
+*.mobileprovision
+*.cer
+*.certSigningRequest
+.env
+.env.*
+AuthKey_*.p8
+fastlane/report.xml
+fastlane/Preview.html
+
+# --- macOS ---
+.DS_Store

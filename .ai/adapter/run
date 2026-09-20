@@ -1,0 +1,45 @@
+#!/bin/sh
+# Launch the app and drive the acceptance flow. This is the runtime tier's engine.
+# usage: run <sim|device> [scenario-script]
+. "$(dirname "$0")/common.sh"
+require_project
+target=${1:-sim}
+scenario=${2:-}
+
+[ "$target" = device ] && die "device runs are not automated.
+  Build to the attached iPhone from Xcode, perform the scenarios in
+  docs/testing/security-matrix.md by hand, and record the result as
+  runtime.target: device in the evidence file. Do not claim device
+  verification from a simulator run."
+
+say "run (simulator: $(mval simulator.name))"
+app=$(sh "$ADAPTER/build" debug | tail -1)
+[ -d "$app" ] || die "built product not found at $app"
+
+run_it() {
+  udid=$(xcrun simctl list devices available -j | jq -r --arg n "$(mval simulator.name)" \
+    '.devices|to_entries[]|.value[]|select(.name==$n)|.udid' | head -1)
+  [ -n "$udid" ] || die "simulator '$(mval simulator.name)' not found"
+  xcrun simctl boot "$udid" 2>/dev/null || true
+  xcrun simctl install "$udid" "$app" || die "install failed"
+  : > "$RUNDIR/runtime.log"
+  xcrun simctl spawn "$udid" log stream --style compact --predicate "subsystem CONTAINS '$(mval project.bundle_id)'" \
+    > "$RUNDIR/runtime.log" 2>&1 &
+  logpid=$!
+  xcrun simctl launch "$udid" "$(mval project.bundle_id)" || { kill $logpid 2>/dev/null; die "launch failed"; }
+  ok "launched"
+  if [ -n "$scenario" ] && [ -x "$scenario" ]; then
+    say "scenario: $scenario"; "$scenario" "$udid" || { kill $logpid 2>/dev/null; die "scenario failed"; }
+    ok "scenario passed"
+  else
+    warn "no scenario script — launch-only. Record scenarios as SKIP, not PASS."
+  fi
+  sleep 2; kill $logpid 2>/dev/null || true
+
+  say "runtime log secret audit"
+  if grep -qiE 'otpauth://|sharedSecret|[A-Z2-7]{16,}' "$RUNDIR/runtime.log"; then
+    die "SECRET MATERIAL FOUND IN RUNTIME LOG — see $RUNDIR/runtime.log"
+  fi
+  ok "no secret material in runtime log"
+}
+with_device_lock run_it

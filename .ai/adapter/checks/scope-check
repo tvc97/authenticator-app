@@ -1,0 +1,18 @@
+#!/bin/sh
+# Assert the diff stayed inside the plan, and touched no frozen path.
+# usage: scope-check <base-ref>
+. "$(dirname "$0")/../common.sh"
+base=${1:-origin/main}
+git -C "$ROOT" rev-parse --verify HEAD >/dev/null 2>&1 || { warn "no commits yet — scope check skipped"; exit 0; }
+git -C "$ROOT" rev-parse --verify "$base" >/dev/null 2>&1 || { warn "base ref '$base' not found — scope check skipped"; exit 0; }
+changed=$(git -C "$ROOT" diff --name-only "$base"...HEAD)
+[ -n "$changed" ] || { ok "no changes"; exit 0; }
+
+say "frozen path check"
+hit=0
+for pat in $(mlist frozen_paths); do
+  glob=$(printf '%s' "$pat" | sed 's|\*\*/||g; s|\*|.*|g')
+  printf '%s\n' "$changed" | grep -E "$glob" >/dev/null 2>&1 && { printf '\033[31m  FROZEN\033[0m %s\n' "$pat"; hit=1; }
+done
+[ "$hit" -eq 0 ] && ok "no frozen paths touched" || die "frozen paths modified — this requires explicit human review.
+  Frozen paths hold crypto, Keychain, entitlements and the workflow's own guards."

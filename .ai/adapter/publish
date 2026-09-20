@@ -1,0 +1,23 @@
+#!/bin/sh
+# Upload to TestFlight. Refuses without the human gate.
+. "$(dirname "$0")/common.sh"
+require_project
+ver=${1:-} ; [ -n "$ver" ] || die "usage: publish <version>"
+ipa=$(ls -1 "$ROOT/$(mval artifacts.dir)/$ver"/*.ipa 2>/dev/null | head -1)
+[ -n "$ipa" ] || die "no .ipa for $ver — run ./.ai/adapter/package $ver first"
+
+command -v gh >/dev/null 2>&1 || die "gh required to read the release gate"
+milestone_gate=$(gh api "repos/{owner}/{repo}/labels" --jq '.[].name' 2>/dev/null | grep -c '^gate:release-approved$' || true)
+[ "$milestone_gate" -ge 1 ] || die "label 'gate:release-approved' does not exist in this repo.
+  The release gate is not configured. Stop."
+
+say "PRODUCTION PUBLISH — $ver"
+printf '  artifact: %s\n  bundle:   %s\n\n' "$ipa" "$(mval project.bundle_id)"
+printf 'Type the exact version to confirm upload to TestFlight: '
+read -r confirm
+[ "$confirm" = "$ver" ] || die "confirmation mismatch — nothing was uploaded"
+
+xcrun altool --upload-app -f "$ipa" -t ios \
+  --apiKey "${ASC_KEY_ID:?set ASC_KEY_ID}" --apiIssuer "${ASC_ISSUER_ID:?set ASC_ISSUER_ID}" \
+  || die "upload failed"
+ok "uploaded $ver to TestFlight"

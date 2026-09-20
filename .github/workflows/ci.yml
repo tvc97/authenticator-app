@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: static (format + lint)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: swift-format lint
+        run: |
+          files=$(git ls-files '*.swift')
+          if [ -z "$files" ]; then echo "no swift sources yet"; exit 0; fi
+          printf '%s\n' "$files" | xargs xcrun swift-format lint --strict --parallel
+
+  security:
+    name: security audit
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: secret-leak audit
+        run: ./.ai/adapter/security
+
+  scope:
+    name: scope + frozen paths
+    if: github.event_name == 'pull_request'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: frozen path check
+        run: ./.ai/adapter/checks/scope-check origin/${{ github.base_ref }}
+
+  unit:
+    name: unit tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: guard — project present?
+        id: guard
+        run: |
+          if grep -q 'status: pending-discovery' .ai/adapter/manifest.yml; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Xcode project yet — unit tier reports SKIP, not PASS."
+          fi
+      - if: steps.guard.outputs.skip != 'true'
+        run: ./.ai/adapter/unit

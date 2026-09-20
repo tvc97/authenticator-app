@@ -1,0 +1,49 @@
+#!/bin/sh
+# Assert the toolchain. Nothing else in the workflow runs until this passes.
+. "$(dirname "$0")/common.sh"
+
+say "Toolchain check"
+fail=0
+note() { printf '\033[31m  MISS\033[0m %s\n     fix: %s\n' "$1" "$2"; fail=1; }
+
+command -v xcodebuild >/dev/null 2>&1 \
+  && ok "Xcode $(xcodebuild -version | head -1 | awk '{print $2}') (manifest wants $(mval toolchain.xcode))" \
+  || note "xcodebuild" "install Xcode, then: sudo xcode-select -s /Applications/Xcode.app"
+
+command -v swift >/dev/null 2>&1 \
+  && ok "Swift $(swift --version 2>&1 | sed -n 's/.*Apple Swift version \([0-9.]*\).*/\1/p' | head -1)" \
+  || note "swift" "install Xcode command line tools"
+
+xcrun --find swift-format >/dev/null 2>&1 \
+  && ok "swift-format (Xcode toolchain)" \
+  || note "swift-format" "Xcode 16+ bundles it; check xcode-select -p"
+
+command -v git >/dev/null 2>&1 && ok "git" || note "git" "xcode-select --install"
+
+command -v gh >/dev/null 2>&1 \
+  && ok "gh $(gh --version | head -1 | awk '{print $3}')" \
+  || note "gh (GitHub CLI)" "brew install gh && gh auth login   # REQUIRED: GitHub is this workflow's state store"
+
+command -v xcbeautify >/dev/null 2>&1 && ok "xcbeautify" || warn "xcbeautify missing (raw xcodebuild output; not fatal)"
+command -v jq >/dev/null 2>&1 && ok "jq" || note "jq" "brew install jq"
+
+say "Simulator"
+if xcrun simctl list devices available 2>/dev/null | grep -q "$(mval simulator.name)"; then
+  ok "$(mval simulator.name) / $(mval simulator.runtime)"
+else
+  note "simulator '$(mval simulator.name)'" "xcrun simctl list devices available, then update .ai/adapter/manifest.yml"
+fi
+
+say "Project"
+if [ "$(mval project.status)" = "ready" ]; then
+  [ -e "$ROOT/$(mval project.path)" ] \
+    && ok "$(mval project.path) scheme=$(mval project.scheme)" \
+    || note "$(mval project.path) declared ready but missing" "run ./.ai/adapter/setup"
+else
+  warn "project.status = pending-discovery"
+  printf '     The workflow scaffolding is installed, but there is no app target yet.\n'
+  printf '     Next: create the SwiftUI app in Xcode, then run ./.ai/adapter/setup\n'
+fi
+
+[ "$fail" -eq 0 ] && { say "env OK"; exit 0; }
+die "toolchain incomplete (see MISS lines above)"

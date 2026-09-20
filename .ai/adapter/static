@@ -1,0 +1,26 @@
+#!/bin/sh
+# Tier 1: formatting, lint, and a warning-free compile.
+. "$(dirname "$0")/common.sh"
+
+say "static: swift-format lint"
+files=$(git -C "$ROOT" ls-files '*.swift' 2>/dev/null || find "$ROOT" -name '*.swift' -not -path '*/.build/*')
+if [ -z "$files" ]; then
+  warn "no Swift sources yet — nothing to lint"
+else
+  printf '%s\n' "$files" | sed "s|^|$ROOT/|" | xargs xcrun swift-format lint --strict --parallel \
+    || die "swift-format lint failed. Fix, or run: xcrun swift-format format -i -r Sources"
+  ok "swift-format lint"
+fi
+
+if [ "$(mval project.status)" = "ready" ]; then
+  say "static: compile with warnings as errors"
+  with_device_lock xcb build \
+    $(proj_flag) -scheme "$(mval project.scheme)" \
+    -destination "$(destination)" \
+    SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+    SWIFT_STRICT_CONCURRENCY="$(mval toolchain.strict_concurrency)" \
+    -quiet || die "compile failed or emitted warnings"
+  ok "compile clean"
+else
+  warn "project pending-discovery — compile step skipped (this is a SKIP, not a PASS)"
+fi

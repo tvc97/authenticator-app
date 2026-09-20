@@ -1,0 +1,7 @@
+{
+  "_comment": "Recurrence counters. Regenerable from the .md files; the .md files are authoritative.",
+  "KEYCHAIN_SIMULATOR_DIVERGENCE": { "id": "LES-0001", "count": 0, "severity": "high",     "status": "recorded" },
+  "TOTP_CLOCK_DRIFT":              { "id": "LES-0002", "count": 0, "severity": "high",     "status": "recorded" },
+  "SECRET_IN_DIAGNOSTICS":         { "id": "LES-0003", "count": 0, "severity": "critical", "status": "automated" },
+  "PASTEBOARD_LEAK":               { "id": "LES-0004", "count": 0, "severity": "medium",   "status": "recorded" }
+}

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Tier 2: unit tests — crypto, time, Keychain wrapper, view models.
+. "$(dirname "$0")/common.sh"
+require_project
+say "unit tests"
+with_device_lock xcb test \
+  $(proj_flag) -scheme "$(mval project.test_scheme)" \
+  -destination "$(destination)" \
+  -only-testing:"$(mval project.scheme)Tests" \
+  -resultBundlePath "$RUNDIR/unit.xcresult" \
+  || die "unit tests failed — see $RUNDIR/unit.xcresult"
+ok "unit tests"

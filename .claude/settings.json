@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./scripts/ai/flow:*)",
+      "Bash(./.ai/adapter/*:*)",
+      "Bash(xcrun swift-format:*)",
+      "Bash(xcodebuild:*)",
+      "Bash(xcrun simctl:*)",
+      "Bash(swift:*)",
+      "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
+      "Bash(git add:*)", "Bash(git commit:*)", "Bash(git checkout:*)",
+      "Bash(git branch:*)", "Bash(git worktree:*)",
+      "Bash(gh issue:*)", "Bash(gh pr:*)", "Bash(gh label:*)", "Bash(gh api:*)",
+      "Bash(jq:*)", "Bash(rg:*)", "Bash(grep:*)", "Bash(find:*)"
+    ],
+    "deny": [
+      "Read(./**/*.p8)", "Read(./**/*.p12)", "Read(./**/*.mobileprovision)",
+      "Read(./.env)", "Read(./.env.*)",
+      "Edit(./**/*.entitlements)", "Edit(./**/Info.plist)",
+      "Edit(./.claude/hooks/**)", "Edit(./.claude/settings.json)",
+      "Edit(./.github/workflows/**)",
+      "Bash(git push --force:*)",
+      "Bash(security:*)",
+      "Bash(xcrun altool:*)",
+      "Bash(fastlane:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash|Edit|Write|NotebookEdit",
+        "hooks": [{ "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-tool-safety.sh" }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Edit|Write",
+        "hooks": [{ "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit.sh" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/stop-evidence.sh" }] }
+    ]
+  }
+}

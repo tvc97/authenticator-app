@@ -1,0 +1,12 @@
+#!/bin/sh
+# Tier 3: UI / integration tests on the simulator.
+. "$(dirname "$0")/common.sh"
+require_project
+say "integration (UI) tests"
+with_device_lock xcb test \
+  $(proj_flag) -scheme "$(mval project.test_scheme)" \
+  -destination "$(destination)" \
+  -only-testing:"$(mval project.scheme)UITests" \
+  -resultBundlePath "$RUNDIR/integration.xcresult" \
+  || die "integration tests failed — see $RUNDIR/integration.xcresult"
+ok "integration tests"

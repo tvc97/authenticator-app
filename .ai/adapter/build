@@ -1,0 +1,18 @@
+#!/bin/sh
+# Build for a configuration. Prints the built product path on stdout.
+. "$(dirname "$0")/common.sh"
+require_project
+cfg=${1:-debug}
+case "$cfg" in debug) conf=Debug; sdk="$(destination)" ;; release) conf=Release; sdk="generic/platform=iOS" ;;
+  *) die "usage: build <debug|release>" ;; esac
+
+say "build ($conf)"
+out="$ROOT/$(mval artifacts.dir)/$conf"
+mkdir -p "$out"
+with_device_lock xcb build \
+  $(proj_flag) -scheme "$(mval project.scheme)" \
+  -configuration "$conf" -destination "$sdk" \
+  -derivedDataPath "$out/DerivedData" \
+  || die "build failed ($conf)"
+ok "build $conf"
+printf '%s\n' "$out/DerivedData/Build/Products/$conf-iphonesimulator/$(mval project.scheme).app"

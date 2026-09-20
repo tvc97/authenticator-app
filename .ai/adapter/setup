@@ -1,0 +1,42 @@
+#!/bin/sh
+# Discover project facts ONCE and record them. Replaces guessing.
+. "$(dirname "$0")/common.sh"
+
+say "Discovering Xcode project"
+cd "$ROOT"
+
+found=$(ls -d *.xcworkspace 2>/dev/null | head -1)
+kind=xcworkspace
+if [ -z "$found" ]; then found=$(ls -d *.xcodeproj 2>/dev/null | head -1); kind=xcodeproj; fi
+if [ -z "$found" ] && [ -f Package.swift ]; then found=Package.swift; kind=swiftpm; fi
+[ -z "$found" ] && die "no .xcworkspace, .xcodeproj or Package.swift at the repo root.
+  Create the SwiftUI app target in Xcode first, then re-run this."
+
+ok "found $found ($kind)"
+
+if [ "$kind" = swiftpm ]; then
+  schemes=$(swift package describe --type json 2>/dev/null | jq -r '.name' || echo "")
+else
+  flag=$([ "$kind" = xcworkspace ] && echo "-workspace" || echo "-project")
+  schemes=$(xcodebuild -list $flag "$found" -json 2>/dev/null | jq -r '(.workspace//.project).schemes[]?')
+fi
+[ -z "$schemes" ] && die "could not list schemes for $found. Open it in Xcode once, then retry."
+
+scheme=$(printf '%s\n' "$schemes" | head -1)
+say "Schemes found:"; printf '%s\n' "$schemes" | sed 's/^/     /'
+ok "using scheme: $scheme"
+
+bundle=$(grep -m1 -r 'PRODUCT_BUNDLE_IDENTIFIER' "$found" 2>/dev/null | sed 's/.*= *//; s/;.*//' | tr -d ' "' || true)
+[ -n "$bundle" ] && ok "bundle id: $bundle" || warn "bundle id not found; fill it in manually"
+
+tmp=$(mktemp)
+sed -e "s|^  status: .*|  status: ready|" \
+    -e "s|^  kind: .*|  kind: $kind|" \
+    -e "s|^  path: .*|  path: $found|" \
+    -e "s|^  scheme: .*|  scheme: $scheme|" \
+    -e "s|^  test_scheme: .*|  test_scheme: $scheme|" \
+    -e "s|^  bundle_id: .*|  bundle_id: \"$bundle\"|" \
+    "$MANIFEST" > "$tmp" && mv "$tmp" "$MANIFEST"
+
+say "manifest.yml updated — these values are now authoritative"
+printf '     project.status = ready\n     Review the file, then commit it.\n'

@@ -1,0 +1,63 @@
+# Project facts. Claude READS this and never guesses these values.
+# Anything marked pending-discovery must be filled by ./.ai/adapter/setup or a human.
+
+platform: ios-swiftui
+
+project:
+  status: ready
+  kind: xcodeproj
+  path: authenticator.xcodeproj
+  scheme: authenticator
+  test_scheme: authenticator
+  bundle_id: "devplaceholder.$(PROJECT_UNIQUE_VALUE:identifier).$(PRODUCT_NAME:rfc1034identifier)"
+  team_id: ""
+
+toolchain:
+  xcode: "27.1"
+  swift: "6.4"
+  min_ios: "26.0"
+  strict_concurrency: complete
+
+simulator:
+  name: "iPhone 18 Pro"
+  runtime: "iOS 27.1"
+
+device:
+  name: ""                       # fill with the primary development iPhone
+  min_supported: ""              # oldest device kept for verification
+
+tiers:
+  - static
+  - unit
+  - integration
+  - security
+  - runtime
+
+# Change classes that CANNOT be verified on the simulator.
+# Touching any of these forces runtime.target = device.
+device_required_for:
+  - keychain-accessibility
+  - secure-enclave
+  - biometrics
+  - icloud-keychain-sync
+  - autofill-extension
+  - camera-qr-scan
+  - watch-companion
+  - background-time-drift
+  - entitlements
+  - push-notifications
+
+# Touching any of these stops for human review, regardless of severity.
+frozen_paths:
+  - "**/Crypto/**"
+  - "**/Keychain/**"
+  - "**/Backup/**"
+  - "**/*.entitlements"
+  - "**/Info.plist"
+  - ".github/workflows/**"
+  - ".claude/hooks/**"
+  - ".claude/settings.json"
+  - ".ai/adapter/**"
+
+artifacts:
+  dir: build
