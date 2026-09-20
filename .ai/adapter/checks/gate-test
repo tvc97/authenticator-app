@@ -228,13 +228,24 @@ commit_file "authenticator/info.plist" "x"
 run_check
 refuses "human_path matching ignores case" "human-only paths modified"
 
-# 17. A manifest pattern that is not a valid ERE must fail closed. Collapsing grep's exit 2
-#     into "no match" switched that rule off while the gate stayed green.
-setup
-commit_file "authenticator/Info.plist" "x"
-sed 's|^  - "\*\*/\*.entitlements"|  - "**/*[.entitlements"|' "$REPO/.ai/adapter/manifest.yml" > "$TMP/wt/.ai/adapter/manifest.yml"
-run_check
-refuses "an invalid manifest pattern fails closed" "not a valid regular expression"
+# 17. A manifest pattern that is not a valid ERE must fail closed.
+#
+#     The changed file must match NO other rule. An earlier version used Info.plist, which
+#     trips the **/Info.plist human_paths rule regardless -- so the non-zero exit never came
+#     from the pattern guard and the assertion stayed green even when the guard was replaced
+#     by a bare printf. docs/notes.md matches nothing, so the guard is the only refusal
+#     available, in both lists.
+for lst in human_paths review_paths; do
+  setup
+  commit_file "docs/notes.md" "x"
+  awk -v l="$lst" '
+    $0 ~ "^"l":" { print; inlist=1; print "  - \"**/bad[\""; next }
+    inlist && /^[^[:space:]-]/ { inlist=0 }
+    { print }
+  ' "$REPO/.ai/adapter/manifest.yml" > "$TMP/wt/.ai/adapter/manifest.yml"
+  run_check
+  refuses "an invalid $lst pattern fails closed" "not a valid regular expression"
+done
 
 # 18. A tag is not a branch. `git tag t HEAD~1; BASE_REF=t` once exited 0 on an Info.plist diff.
 setup

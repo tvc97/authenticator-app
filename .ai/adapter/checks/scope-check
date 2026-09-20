@@ -49,6 +49,10 @@ if [ "$base_explicit" = yes ]; then
   HEAD~1 -- or a tag pointing at it -- silently excludes whatever that commit changed,
   which is how a guarded path reaches main with the gate green.
   Fix: name the branch this one merges into, e.g. BASE_REF=origin/main."
+  # Residual, and inherent to supporting stacked branches: a branch planted on an older
+  # commit (git branch x HEAD~1) is indistinguishable from a genuine parent and still
+  # narrows the diff. The anomalous base is at least recorded in evidence.yml and
+  # cross-checked by `flow precheck`.
 fi
 
 # --no-renames is load-bearing. With rename detection on, moving Sources/Crypto/HMAC.swift
@@ -63,22 +67,36 @@ if [ -z "$issue" ]; then
   issue=$(printf '%s' "$b" | sed -n 's|^[a-z]*/\([0-9]\{1,\}\)-.*|\1|p')
 fi
 
+# glob_re <manifest glob> -> the ERE it converts to
+glob_re() { printf '%s' "$1" | sed 's|\*\*/||g; s|\*|.*|g'; }
+
 # pat_hits <glob> -> the changed files matching it, empty if none.
 #
 # -i because the guarded paths are a security rule, not a spelling convention: on a
 # case-insensitive filesystem authenticator/info.plist and INFO.PLIST are the same file, and
 # a case-sensitive matcher would wave both past the human_paths check.
 #
-# grep exits 1 for "no match" and 2 for "bad pattern". Collapsing both to "no match" meant a
-# manifest entry that is not a valid ERE silently switched its own rule off while the gate
-# stayed green -- fail open, in the one function every rule depends on.
-pat_hits() {
-  glob=$(printf '%s' "$1" | sed 's|\*\*/||g; s|\*|.*|g')
-  _hits=$(printf '%s\n' "$changed" | grep -Ei "$glob") || {
-    [ $? -eq 1 ] || die "manifest pattern '$1' is not a valid regular expression
-  (it converts to '$glob'). Refusing to report PASS for a rule that cannot be evaluated."
-  }
-  printf '%s' "$_hits"
+# No `die` in here. This runs inside $( ), so a die would exit the command substitution
+# subshell, and at the review_paths loop -- where the call sits inside `[ -n "$(...)" ] &&`
+# -- neither the status nor `set -e` propagates. The rule would be read as "no match" and
+# the gate would go green with that rule switched off. Patterns are validated below, in the
+# parent shell, so by the time this runs the only possible failure is a genuine no-match.
+pat_hits() { printf '%s\n' "$changed" | grep -Ei "$(glob_re "$1")" || true; }
+
+# Validate every pattern ONCE, in the parent shell, before any rule runs.
+#
+# grep exits 1 for "no match" and 2 for "bad pattern". A manifest entry that is not a valid
+# ERE would otherwise silently match nothing and switch its own rule off while the gate
+# reported PASS -- fail open, in the one function every rule depends on.
+validate_patterns() {
+  for pat in $(mlist "$1"); do
+    # Status must be captured in an `if`: a bare `grep -q` returning 1 for "no match" would
+    # be a plain failing command, and `set -e` from common.sh would kill the script.
+    if printf '' | grep -Eiq "$(glob_re "$pat")" 2>/dev/null; then _vst=0; else _vst=$?; fi
+    [ "$_vst" -le 1 ] || die "manifest.yml $1 entry '$pat' is not a valid regular expression
+  (it converts to '$(glob_re "$pat")'). Refusing to report PASS for a rule set that
+  cannot be evaluated."
+  done
 }
 
 # An empty list is not a satisfied list. If the manifest key is missing or renamed, the
@@ -87,6 +105,8 @@ pat_hits() {
   report PASS for a rule set that could not be read."
 [ -n "$(mlist review_paths)" ] || die "manifest.yml has no review_paths list. Refusing to
   report PASS for a rule set that could not be read."
+validate_patterns human_paths
+validate_patterns review_paths
 
 say "human-only path check"
 hit=0

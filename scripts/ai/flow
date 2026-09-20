@@ -47,13 +47,17 @@ base_ref() {
   path and marker check would pass vacuously. Set it to the branch this one merges INTO."
     fi
     # Mirror of the same hole: BASE_REF=HEAD~1 does not contain HEAD, but it drops whatever
-    # that commit changed from every path and marker check. Require a named ref.
+    # that commit changed from every path and marker check. Require a BRANCH, not any ref --
+    # a tag planted on HEAD~1 hides the same commit. This must stay identical to the rule in
+    # .ai/adapter/checks/scope-check: this copy feeds needs_device and touches_app_sources,
+    # so a divergence lets flow accept a base the scope gate refuses.
     _cur=$(git -C "$ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || echo "")
     _named=$(git -C "$ROOT" for-each-ref --format='%(refname:short)' \
-               --points-at "$(git -C "$ROOT" rev-parse "$BASE_REF")" 2>/dev/null \
+               --points-at "$(git -C "$ROOT" rev-parse "$BASE_REF")" refs/heads/ refs/remotes/ 2>/dev/null \
              | grep -vx "$_cur" || true)
-    [ -n "$_named" ] || die "BASE_REF='$BASE_REF' is not the tip of any branch other than
-  this one. A bare commit such as HEAD~1 excludes what it changed from every check.
+    [ -n "$_named" ] || die "BASE_REF='$BASE_REF' is not the tip of a local or remote branch
+  other than this one. Tags and bare commits are refused: a base such as HEAD~1, or a tag
+  pointing at it, excludes what that commit changed from every check.
   Fix: name the branch this one merges into, e.g. BASE_REF=origin/main."
     printf '%s\n' "$BASE_REF"; return
   fi
