@@ -1,6 +1,11 @@
 #!/bin/sh
 # Launch the app and drive the acceptance flow. This is the runtime tier's engine.
 # usage: run <sim|device> [scenario-script]
+#
+# Devices are resolved through the Core Device hub (`xcrun devicectl`), which lists physical
+# and simulated devices in one registry and tags each with a `reality`. Matching on reality
+# is deliberate: manifest.yml may legitimately name the same model for both, and a device
+# run that silently resolved to a simulator would be a false completion claim.
 . "$(dirname "$0")/common.sh"
 require_project
 target=${1:-sim}
@@ -12,22 +17,44 @@ scenario=${2:-}
   runtime.target: device in the evidence file. Do not claim device
   verification from a simulator run."
 
-say "run (simulator: $(mval simulator.name))"
+sim_name=$(mval simulator.name)
+sim_os=$(mval simulator.runtime | sed 's/^iOS //')
+
+say "run (simulator: $sim_name / iOS $sim_os)"
 app=$(sh "$ADAPTER/build" debug | tail -1)
 [ -d "$app" ] || die "built product not found at $app"
 
 run_it() {
-  udid=$(xcrun simctl list devices available -j | jq -r --arg n "$(mval simulator.name)" \
-    '.devices|to_entries[]|.value[]|select(.name==$n)|.udid' | head -1)
-  [ -n "$udid" ] || die "simulator '$(mval simulator.name)' not found"
-  xcrun simctl boot "$udid" 2>/dev/null || true
-  xcrun simctl install "$udid" "$app" || die "install failed"
+  udid=$(hub_udid "$sim_name" simulated "$sim_os")
+  [ -n "$udid" ] || die "no simulated device named '$sim_name' running iOS $sim_os.
+  Inspect the hub:  xcrun devicectl list devices
+  The name AND the OS version must both match .ai/adapter/manifest.yml.
+  A device of that name with reality=physical does not satisfy a 'sim' run."
+
+  if [ "$(hub_boot_state "$udid")" != booted ]; then
+    say "booting $sim_name"
+    # devicectl has no boot verb for simulators; simctl remains the only way to start one.
+    xcrun simctl boot "$udid" 2>/dev/null || true
+    xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1 || true
+  fi
+
+  xcrun devicectl device install app --device "$udid" "$app" >/dev/null 2>&1 \
+    || die "install failed on $sim_name ($udid)"
+
   : > "$RUNDIR/runtime.log"
+  # devicectl has no log-streaming verb; the secret audit still needs simctl for this.
   xcrun simctl spawn "$udid" log stream --style compact --predicate "subsystem CONTAINS '$(mval project.bundle_id)'" \
     > "$RUNDIR/runtime.log" 2>&1 &
   logpid=$!
-  xcrun simctl launch "$udid" "$(mval project.bundle_id)" || { kill $logpid 2>/dev/null; die "launch failed"; }
-  ok "launched"
+
+  xcrun devicectl device process launch --device "$udid" "$(mval project.bundle_id)" >/dev/null 2>&1 \
+    || { kill $logpid 2>/dev/null; die "launch failed for $(mval project.bundle_id).
+  The app installed, so the bundle id in manifest.yml does not match the one the app
+  was built with. Compare:
+    /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \"$app/Info.plist\"
+    grep bundle_id .ai/adapter/manifest.yml"; }
+  ok "launched on $sim_name (reality: simulated)"
+
   if [ -n "$scenario" ] && [ -x "$scenario" ]; then
     say "scenario: $scenario"; "$scenario" "$udid" || { kill $logpid 2>/dev/null; die "scenario failed"; }
     ok "scenario passed"

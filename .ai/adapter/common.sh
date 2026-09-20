@@ -73,6 +73,32 @@ with_device_lock() {
   "$@"
 }
 
+# --- Core Device hub -------------------------------------------------------
+# Xcode's unified registry: physical devices and simulators in one list, each tagged with
+# a `reality` of physical|simulated. Resolving through it is what makes "simulator-verified"
+# and "device-verified" different values the tooling can tell apart, instead of a claim a
+# human has to remember to make correctly. See CLAUDE.md, "Verification".
+#
+# hub_udid <name> <simulated|physical> [os-version]  -> prints a UDID, or nothing.
+hub_udid() {
+  xcrun devicectl list devices --json-output - 2>/dev/null | jq -r \
+    --arg n "$1" --arg r "$2" --arg os "${3:-}" '
+      [ .result.devices[]
+        | select(.deviceProperties.name == $n)
+        | select(.hardwareProperties.reality == $r)
+        | select($os == "" or .deviceProperties.osVersionNumber == $os)
+        | .hardwareProperties.udid ] | first // empty'
+}
+
+# hub_boot_state <udid> -> booted | shutdown | unknown
+hub_boot_state() {
+  xcrun devicectl list devices --json-output - 2>/dev/null | jq -r \
+    --arg u "$1" '
+      [ .result.devices[]
+        | select(.hardwareProperties.udid == $u)
+        | .deviceProperties.bootState ] | first // "unknown"'
+}
+
 destination() {
   printf 'platform=iOS Simulator,name=%s,OS=%s' \
     "$(mval simulator.name)" "$(mval simulator.runtime | sed 's/^iOS //')"
