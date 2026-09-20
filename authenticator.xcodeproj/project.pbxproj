@@ -6,8 +6,27 @@
 	objectVersion = 90;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		C0B5393F305FD000003CDCE9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000100000000;
+			remoteInfo = authenticator;
+		};
+		C0B5394C305FD021003CDCE9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000100000000;
+			remoteInfo = authenticator;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		000000000000000000000120 /* authenticator.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = authenticator.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C0B5393B305FD000003CDCE9 /* authenticatorTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = authenticatorTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C0B53948305FD021003CDCE9 /* authenticatorUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = authenticatorUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -16,10 +35,30 @@
 			path = authenticator;
 			sourceTree = "<group>";
 		};
+		C0B5393C305FD000003CDCE9 /* authenticatorTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = authenticatorTests;
+			sourceTree = "<group>";
+		};
+		C0B53949305FD021003CDCE9 /* authenticatorUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = authenticatorUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		000000000000000130000000 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		C0B53938305FD000003CDCE9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		C0B53945305FD021003CDCE9 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
 			);
@@ -31,6 +70,8 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000010 /* authenticator */,
+				C0B5393C305FD000003CDCE9 /* authenticatorTests */,
+				C0B53949305FD021003CDCE9 /* authenticatorUITests */,
 				000000000000000000000020 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -39,6 +80,8 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000120 /* authenticator.app */,
+				C0B5393B305FD000003CDCE9 /* authenticatorTests.xctest */,
+				C0B53948305FD021003CDCE9 /* authenticatorUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -64,6 +107,48 @@
 			productReference = 000000000000000000000120 /* authenticator.app */;
 			productType = "com.apple.product-type.application";
 		};
+		C0B5393A305FD000003CDCE9 /* authenticatorTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C0B53943305FD000003CDCE9 /* Build configuration list for PBXNativeTarget "authenticatorTests" */;
+			buildPhases = (
+				C0B53937305FD000003CDCE9 /* Sources */,
+				C0B53938305FD000003CDCE9 /* Frameworks */,
+				C0B53939305FD000003CDCE9 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C0B53940305FD000003CDCE9 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				C0B5393C305FD000003CDCE9 /* authenticatorTests */,
+			);
+			name = authenticatorTests;
+			productName = authenticatorTests;
+			productReference = C0B5393B305FD000003CDCE9 /* authenticatorTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		C0B53947305FD021003CDCE9 /* authenticatorUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C0B5394E305FD021003CDCE9 /* Build configuration list for PBXNativeTarget "authenticatorUITests" */;
+			buildPhases = (
+				C0B53944305FD021003CDCE9 /* Sources */,
+				C0B53945305FD021003CDCE9 /* Frameworks */,
+				C0B53946305FD021003CDCE9 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C0B5394D305FD021003CDCE9 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				C0B53949305FD021003CDCE9 /* authenticatorUITests */,
+			);
+			name = authenticatorUITests;
+			productName = authenticatorUITests;
+			productReference = C0B53948305FD021003CDCE9 /* authenticatorUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -71,11 +156,19 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2630;
+				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					000000000000000100000000 = {
 						CreatedOnToolsVersion = 26.3;
+					};
+					C0B5393A305FD000003CDCE9 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 000000000000000100000000;
+					};
+					C0B53947305FD021003CDCE9 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 000000000000000100000000;
 					};
 				};
 			};
@@ -94,12 +187,24 @@
 			projectRoot = "";
 			targets = (
 				000000000000000100000000 /* authenticator */,
+				C0B5393A305FD000003CDCE9 /* authenticatorTests */,
+				C0B53947305FD021003CDCE9 /* authenticatorUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		000000000000000140000000 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		C0B53939305FD000003CDCE9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		C0B53946305FD021003CDCE9 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
@@ -112,7 +217,30 @@
 			files = (
 			);
 		};
+		C0B53937305FD000003CDCE9 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		C0B53944305FD021003CDCE9 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		C0B53940305FD000003CDCE9 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000100000000 /* authenticator */;
+			targetProxy = C0B5393F305FD000003CDCE9 /* PBXContainerItemProxy */;
+		};
+		C0B5394D305FD021003CDCE9 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000100000000 /* authenticator */;
+			targetProxy = C0B5394C305FD021003CDCE9 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		000000000000000011000000 /* Debug configuration for PBXProject "authenticator" */ = {
@@ -323,6 +451,94 @@
 			};
 			name = Release;
 		};
+		C0B53941305FD000003CDCE9 /* Debug configuration for PBXNativeTarget "authenticatorTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HA7PT38WRU;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = co.alley51.authenticatorTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/authenticator.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/authenticator";
+			};
+			name = Debug;
+		};
+		C0B53942305FD000003CDCE9 /* Release configuration for PBXNativeTarget "authenticatorTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HA7PT38WRU;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = co.alley51.authenticatorTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/authenticator.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/authenticator";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		C0B5394F305FD021003CDCE9 /* Debug configuration for PBXNativeTarget "authenticatorUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HA7PT38WRU;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = co.alley51.authenticatorUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = authenticator;
+			};
+			name = Debug;
+		};
+		C0B53950305FD021003CDCE9 /* Release configuration for PBXNativeTarget "authenticatorUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HA7PT38WRU;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = co.alley51.authenticatorUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = authenticator;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -339,6 +555,22 @@
 			buildConfigurations = (
 				000000000000000111000000 /* Debug configuration for PBXNativeTarget "authenticator" */,
 				000000000000000112000000 /* Release configuration for PBXNativeTarget "authenticator" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		C0B53943305FD000003CDCE9 /* Build configuration list for PBXNativeTarget "authenticatorTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C0B53941305FD000003CDCE9 /* Debug configuration for PBXNativeTarget "authenticatorTests" */,
+				C0B53942305FD000003CDCE9 /* Release configuration for PBXNativeTarget "authenticatorTests" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		C0B5394E305FD021003CDCE9 /* Build configuration list for PBXNativeTarget "authenticatorUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C0B5394F305FD021003CDCE9 /* Debug configuration for PBXNativeTarget "authenticatorUITests" */,
+				C0B53950305FD021003CDCE9 /* Release configuration for PBXNativeTarget "authenticatorUITests" */,
 			);
 			defaultConfigurationName = Release;
 		};
