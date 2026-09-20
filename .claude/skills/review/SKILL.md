@@ -24,9 +24,14 @@ Re-run `./scripts/ai/flow verify <issue>` first. A review of an unverified diff 
 ./.ai/adapter/checks/scope-check origin/main <issue>
 ```
 
+For a **stacked** branch, pass the parent branch instead — `BASE_REF=<parent> …`.
+Diffed against `main`, a stacked branch re-litigates its parent's commits. `scope-check`
+refuses a base that already contains HEAD, so `BASE_REF=HEAD` is not a way around a
+red gate.
+
 Before a verdict exists this reports `BLOCKED` for any `review_paths` touched. That is the
 gate working, not noise — it is telling you which hunks the reviewer must read line by line.
-Note them. **Step 6 re-runs this check for real**, after the verdict is on disk; do not treat
+Note them. **Step 5 re-runs this check for real**, after the verdict is on disk; do not treat
 this first run as the enforcement.
 
 ## 3. Delegate to the `reviewer` subagent

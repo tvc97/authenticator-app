@@ -38,8 +38,15 @@ branch()   { b=$(git -C "$ROOT" symbolic-ref --short HEAD 2>/dev/null) && [ -n "
 base_ref() {
   if [ -n "${BASE_REF:-}" ]; then
     git -C "$ROOT" rev-parse --verify "$BASE_REF" >/dev/null 2>&1 \
-      && { printf '%s\n' "$BASE_REF"; return; }
-    die "BASE_REF='$BASE_REF' is not a ref in this repository"
+      || die "BASE_REF='$BASE_REF' is not a ref in this repository"
+    # A base that already contains HEAD yields an empty diff, which silently makes
+    # touches_app_sources false and blinds the device_required_markers scan -- so
+    # BASE_REF=HEAD would buy a runtime PASS and a green scope gate in one move.
+    if git -C "$ROOT" merge-base --is-ancestor HEAD "$BASE_REF" 2>/dev/null; then
+      die "BASE_REF='$BASE_REF' already contains HEAD. The diff would be empty and every
+  path and marker check would pass vacuously. Set it to the branch this one merges INTO."
+    fi
+    printf '%s\n' "$BASE_REF"; return
   fi
   for _br in origin/main main; do
     git -C "$ROOT" rev-parse --verify "$_br" >/dev/null 2>&1 && { printf '%s\n' "$_br"; return; }
@@ -50,7 +57,6 @@ base_ref() {
 # --no-renames: see the comment in .ai/adapter/checks/scope-check. A rename out of a guarded
 # directory reports only the destination, and the guard never fires.
 changed_files() { git -C "$ROOT" diff --no-renames --name-only "$(base_ref)"...HEAD 2>/dev/null || true; }
-changed_diff()  { git -C "$ROOT" diff --no-renames "$(base_ref)"...HEAD 2>/dev/null || true; }
 # Markers are SOURCE-level API usage. Scanning the whole diff makes manifest.yml -- the
 # file that defines the marker list -- match every one of its own markers, so any edit to
 # the list demands a device run. Config naming an API is not the same as code calling it.
@@ -214,6 +220,7 @@ cmd_verify() {
   issue=$1
   d="$RUNDIR/$issue"; mkdir -p "$d"
   start=$(date -u +%Y-%m-%dT%H:%M:%SZ); t0=$(date +%s)
+  vbase=$(base_ref); vbase_sha=$(git -C "$ROOT" rev-parse --short "$vbase")
   : > "$d/tiers.tmp"
   status=PASS
   for tier in $(mlist tiers); do
@@ -263,8 +270,11 @@ cmd_verify() {
   printf '%-12s %s\n' "runtime" "$rt"
 
   {
-    printf 'issue: %s\ncommit: %s\nstarted: %s\nduration_s: %s\n\ntiers:\n' \
-      "$issue" "$(head_sha)" "$start" "$(( $(date +%s) - t0 ))"
+    # The base is part of the claim. "no app source changed" is only true relative to
+    # something, and without this line the runtime verdict is not reproducible from the
+    # repo plus the documented command -- it depends on an unrecorded BASE_REF.
+    printf 'issue: %s\ncommit: %s\nbase: %s @ %s\nstarted: %s\nduration_s: %s\n\ntiers:\n' \
+      "$issue" "$(head_sha)" "$vbase" "$vbase_sha" "$start" "$(( $(date +%s) - t0 ))"
     cat "$d/tiers.tmp"
     printf '\nruntime:\n  target: %s\n' "$rt_target"
     [ -n "$rt_device" ] && printf '  device: "%s"\n' "$rt_device"
@@ -288,7 +298,7 @@ cmd_verify() {
 # nothing else does, so this is the only automatic caller. See ADR-002.
 cmd_precheck() {
   issue=$1
-  say "precheck #$issue"
+  say "precheck #$issue (base: $(base_ref))"
   evidence_fresh "$issue" || die "evidence for #$issue is missing or STALE — run: ./scripts/ai/flow verify $issue"
   evidence_all_pass "$issue" || die "evidence for #$issue has a tier that is not PASS — see .ai/run/$issue/evidence.yml"
   ok "evidence fresh and all-PASS"

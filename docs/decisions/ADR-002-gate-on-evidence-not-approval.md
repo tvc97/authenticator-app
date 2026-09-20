@@ -83,10 +83,18 @@ outcome that is neither pass nor failure, and that `flow verify` exits non-zero 
 verdict on disk, and `/review` must print `precheck OK` before `gh pr create`.
 
 **The gates have a regression test.** `.ai/adapter/checks/gate-test` builds a throwaway repo
-and asserts nine properties: human-path hard failure even with an APPROVE on record, missing
-verdict, `REQUEST_CHANGES`, stale verdict, fresh verdict, a verdict smuggled into a nested
-key, and a rename out of a guarded directory. It runs inside the `static` tier. Without it,
-the compensating control is exercised by nothing — the Swift tiers do not touch a line of it.
+and asserts thirteen properties, each one a way the gate could pass when it should not:
+human-path hard failure even with an APPROVE on record; missing, stale, nested and
+`REQUEST_CHANGES` verdicts; a rename out of a guarded directory; a missing base ref; a base
+that already contains HEAD (`BASE_REF=HEAD` would otherwise empty the diff and green the
+whole gate); and a rule list the manifest could not supply. It runs inside the `static`
+tier. Without it the compensating control is exercised by nothing — the Swift tiers do not
+touch a line of it, and two rounds of cold review found real holes in it that only the suite
+could keep shut.
+
+**Evidence records its own base.** `evidence.yml` carries `base: <ref> @ <sha>`. "No app
+source changed" is only true relative to something, and a runtime verdict that depends on an
+unrecorded `BASE_REF` is not reproducible from the repo plus the documented command.
 
 ## Alternatives considered
 
@@ -124,7 +132,19 @@ Bad, and accepted deliberately:
   convention — it must not be given implementation context — not by a mechanism.
 - Bringing CI back for genuine cross-machine verification requires a new ADR.
 
-**Outstanding, and it needs the human.** `.claude/hooks/stop-evidence.sh` enforces the
+**Outstanding, and both need the human.**
+
+`.claude/settings.json` denies `Edit(./.github/workflows/**)`, while the manifest puts
+`.github/**` in `review_paths`. That looks like the inconsistency this ADR calls
+unacceptable, and the classification is deliberate: the criterion is *can an agent satisfy
+this at all*, and it can — this PR deleted `ci.yml` with `git rm`, which the deny list does
+not cover. So `review_paths` is the honest label and the **deny entry** is the misleading
+half: it blocks one tool, not the capability, and buys a sense of protection it does not
+provide. The human should either drop that deny entry or move `.github/workflows/**` into
+`human_paths` and mean it. `settings.json` is itself `human_paths`, so an agent cannot
+resolve this either way.
+
+ `.claude/hooks/stop-evidence.sh` enforces the
 evidence half of the Completion rule but not the review half: it checks `evidence.yml`'s
 `commit` and stops there, so an agent could write `DONE` on a `review_paths` diff with no
 verdict on disk. The hook is `human_paths` — an agent cannot edit it, which is the correct

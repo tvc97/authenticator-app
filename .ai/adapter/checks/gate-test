@@ -130,10 +130,37 @@ case "$out" in *"not APPROVE"*|*"no cold review"*) green "a nested verdict does 
 
 # 10. A missing base ref must NOT skip the gate. It used to warn and exit 0, which turned
 #     the entire check off on a typo or an unfetched remote.
+#     Assert the EXIT STATUS, not the message: matching only on text let a patched
+#     scope-check that still exited 0 report PASS here while an Info.plist sailed through.
 setup
 commit_file "authenticator/Info.plist" "x"
-out=$( ( cd "$TMP/wt" && BASE_REF=no/such/ref ./.ai/adapter/checks/scope-check main 99 2>&1 ) || true )
-case "$out" in *"not found"*) green "missing base ref fails closed" ;; *) red "missing base ref must not skip: $out" ;; esac
+if ( cd "$TMP/wt" && BASE_REF=no/such/ref ./.ai/adapter/checks/scope-check main 99 ) >/dev/null 2>&1; then
+  red "missing base ref must fail closed, but scope-check exited 0"
+else
+  green "missing base ref fails closed"
+fi
+
+# 11. A base that already CONTAINS HEAD yields an empty diff, and every rule below would
+#     pass vacuously. One env var must not switch the gate green.
+setup
+commit_file "authenticator/Info.plist" "x"
+for b in HEAD task/99-gate-test; do
+  if ( cd "$TMP/wt" && BASE_REF="$b" ./.ai/adapter/checks/scope-check main 99 ) >/dev/null 2>&1; then
+    red "BASE_REF=$b must not pass an Info.plist change"
+  else
+    green "BASE_REF=$b is refused as a self-referential base"
+  fi
+done
+
+# 12. An empty or renamed rule list is not a satisfied rule list.
+setup
+sed 's/^human_paths:/frozen_paths:/' "$REPO/.ai/adapter/manifest.yml" > "$TMP/wt/.ai/adapter/manifest.yml"
+commit_file "authenticator/Info.plist" "x"
+if ( cd "$TMP/wt" && ./.ai/adapter/checks/scope-check main 99 ) >/dev/null 2>&1; then
+  red "an unreadable human_paths list must not report PASS"
+else
+  green "unreadable human_paths list fails closed"
+fi
 
 printf '\033[1m==>\033[0m %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1

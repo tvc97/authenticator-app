@@ -10,6 +10,11 @@ set -f
 # parent branch; against main it re-litigates the parent's diff. scripts/ai/flow passes
 # the same value it uses for every other path check.
 base=${BASE_REF:-${1:-origin/main}}
+# Was the base chosen by the operator, or defaulted? An operator-supplied base that
+# contains HEAD is always wrong; the DEFAULT resolving to HEAD is the ordinary
+# "on main, nothing to compare" case and is allowed to report "no changes".
+base_explicit=no
+[ -n "${BASE_REF:-}" ] || [ -n "${1:-}" ] && base_explicit=yes
 git -C "$ROOT" rev-parse --verify HEAD >/dev/null 2>&1 || { warn "no commits yet — scope check skipped"; exit 0; }
 # FAIL CLOSED. This used to warn and exit 0, which meant a typo'd or unfetched base ref
 # silently disabled the human-path and review-path checks entirely -- the whole gate, off,
@@ -17,6 +22,17 @@ git -C "$ROOT" rev-parse --verify HEAD >/dev/null 2>&1 || { warn "no commits yet
 git -C "$ROOT" rev-parse --verify "$base" >/dev/null 2>&1 || die "base ref '$base' not found.
   The scope gate cannot run without a base to diff against, and it will not skip itself.
   Fix: git fetch origin, or set BASE_REF to the branch this one will merge into."
+
+# A base that CONTAINS HEAD produces an empty diff, which every rule below then "passes".
+# BASE_REF=HEAD, or BASE_REF=<this branch>, would switch the whole gate green through a
+# door the not-found check does not cover. Equality counts: BASE_REF=HEAD is the exploit,
+# not an edge case. Only a DEFAULTED base is allowed to be an ancestor of HEAD.
+if [ "$base_explicit" = yes ] \
+   && git -C "$ROOT" merge-base --is-ancestor HEAD "$base" 2>/dev/null; then
+  die "base ref '$base' already contains HEAD, so the diff is empty and every rule below
+  would pass vacuously. That is the gate switching itself off, not a clean branch.
+  Fix: set BASE_REF to the branch this one will actually merge INTO."
+fi
 # --no-renames is load-bearing. With rename detection on, moving Sources/Crypto/HMAC.swift
 # to Sources/Util/HMAC.swift reports ONLY the destination, so no rule matches and crypto
 # walks out of a guarded directory unreviewed. Without it, both paths are reported.
@@ -34,6 +50,13 @@ pat_hits() {
   glob=$(printf '%s' "$1" | sed 's|\*\*/||g; s|\*|.*|g')
   printf '%s\n' "$changed" | grep -E "$glob" 2>/dev/null || true
 }
+
+# An empty list is not a satisfied list. If the manifest key is missing or renamed, the
+# for-loop below simply never runs and every guarded path reports PASS.
+[ -n "$(mlist human_paths)" ]  || die "manifest.yml has no human_paths list. Refusing to
+  report PASS for a rule set that could not be read."
+[ -n "$(mlist review_paths)" ] || die "manifest.yml has no review_paths list. Refusing to
+  report PASS for a rule set that could not be read."
 
 say "human-only path check"
 hit=0

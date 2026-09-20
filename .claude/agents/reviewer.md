@@ -19,9 +19,12 @@ Check every line:
 ```
 [ ] Every acceptance criterion in the issue is actually implemented
 [ ] The diff touches only files the plan listed; nothing from "files not to modify"
-[ ] No human_paths touched at all (manifest.yml: entitlements, Info.plist)
-[ ] Any review_paths touched (manifest.yml: Crypto, Keychain, Backup, adapter, hooks) are
-    justified by the issue — this review IS their gate, so read those hunks line by line
+[ ] No human_paths touched at all — entitlements, Info.plist, .claude/hooks/**,
+    .claude/settings.json. A diff touching one is a blocking finding, never a "justified?"
+    question: an agent cannot write these, so anything that did routed around the deny list
+[ ] Any review_paths touched (Crypto, Keychain, Backup, .ai/adapter/**, scripts/ai/**,
+    .github/**) are justified by the issue — this review IS their gate, so read those
+    hunks line by line
 [ ] Errors handled; no silent catch; no force-unwrap on external input
 [ ] Swift 6 concurrency: no data race, correct actor isolation, no @unchecked without justification
 [ ] Tests are meaningful — they fail if the behavior regresses

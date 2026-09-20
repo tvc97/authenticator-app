@@ -40,12 +40,13 @@ Keychain. These are not style preferences; they are correctness requirements.
 - Pasteboard writes of a code must set an expiry and must not sync to other devices.
 - Biometric/passcode gate is a security boundary, not a UI state. Changing it requires an ADR.
 - Crypto is HMAC/base32 from a reviewed implementation. Do not hand-roll, do not "optimize".
-- `manifest.yml: human_paths` (entitlements, `Info.plist`) cannot be edited by an agent at
-  all. The settings deny list and `pre-tool-safety.sh` both block it. A human changes these
-  in Xcode, with an ADR.
-- `manifest.yml: review_paths` (Crypto, Keychain, Backup, the adapter, the hooks) may be
-  changed, but the change is not done until `/review` records `verdict: APPROVE` against the
-  current HEAD in `.ai/run/<issue>/review.yml`. `scope-check` enforces it.
+- `manifest.yml: human_paths` (entitlements, `Info.plist`, `.claude/hooks/**`,
+  `.claude/settings.json`) cannot be edited by an agent at all. The settings deny list and
+  `pre-tool-safety.sh` both block them. A human changes these, with an ADR.
+- `manifest.yml: review_paths` (Crypto, Keychain, Backup, `.ai/adapter/**`, `scripts/ai/**`,
+  `.github/**`) may be changed, but the change is not done until `/review` records
+  `verdict: APPROVE` against the current HEAD in `.ai/run/<issue>/review.yml`.
+  `scope-check` enforces it.
 
 ## Architecture
 

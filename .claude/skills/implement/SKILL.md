@@ -27,12 +27,13 @@ No human approval step — see ADR-002.
 Authenticator rules that override convenience:
 - A seed goes to the Keychain and nowhere else. Not a log, not a plist, not a breadcrumb.
 - Do not add a dependency. If you believe you must, stop and propose an ADR.
-- `manifest.yml: human_paths` (entitlements, Info.plist) cannot be edited at all — the
-  settings deny list and `pre-tool-safety.sh` both block it. If the change needs one, stop
-  and say so; a human makes it in Xcode with an ADR.
-- `manifest.yml: review_paths` (Crypto, Keychain, Backup, the adapter, the hooks) may be
-  changed, but `scope-check` will refuse the PR until `/review <issue>` records APPROVE
-  against the current HEAD. Budget for that round trip; do not leave it to the end.
+- `manifest.yml: human_paths` (entitlements, `Info.plist`, `.claude/hooks/**`,
+  `.claude/settings.json`) cannot be edited at all — the settings deny list and
+  `pre-tool-safety.sh` both block them. If the change needs one, stop and say so.
+- `manifest.yml: review_paths` (Crypto, Keychain, Backup, `.ai/adapter/**`,
+  `scripts/ai/**`, `.github/**`) may be changed, but `scope-check` refuses the PR until
+  `/review <issue>` records APPROVE against the current HEAD. Budget for that round trip;
+  do not leave it to the end.
 
 Finish by running `./scripts/ai/flow verify <issue>`. Completion is the evidence file, not
 your opinion. There is no CI to catch what you skipped — the tiers run here or nowhere.
