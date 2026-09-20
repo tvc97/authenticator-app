@@ -2,11 +2,19 @@
 # Tier 3: UI / integration tests on the simulator.
 . "$(dirname "$0")/common.sh"
 require_project
+
+# Scope the result bundle to the issue, and clear it first: xcodebuild refuses to
+# overwrite an existing -resultBundlePath, which made every second run "fail" with
+# something indistinguishable from a real test failure. See #25.
+issue=${1:-scratch}
+bundle="$RUNDIR/$issue/integration.xcresult"
+mkdir -p "$RUNDIR/$issue"
+rm -rf "$bundle"
 say "integration (UI) tests"
 with_device_lock xcb test \
   $(proj_flag) -scheme "$(mval project.test_scheme)" \
   -destination "$(destination)" \
   -only-testing:"$(mval project.scheme)UITests" \
-  -resultBundlePath "$RUNDIR/integration.xcresult" \
-  || die "integration tests failed — see $RUNDIR/integration.xcresult"
+  -resultBundlePath "$bundle" \
+  || die "integration tests failed — see $bundle"
 ok "integration tests"

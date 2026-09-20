@@ -2,11 +2,19 @@
 # Tier 2: unit tests — crypto, time, Keychain wrapper, view models.
 . "$(dirname "$0")/common.sh"
 require_project
+
+# Scope the result bundle to the issue, and clear it first: xcodebuild refuses to
+# overwrite an existing -resultBundlePath, which made every second run "fail" with
+# something indistinguishable from a real test failure. See #25.
+issue=${1:-scratch}
+bundle="$RUNDIR/$issue/unit.xcresult"
+mkdir -p "$RUNDIR/$issue"
+rm -rf "$bundle"
 say "unit tests"
 with_device_lock xcb test \
   $(proj_flag) -scheme "$(mval project.test_scheme)" \
   -destination "$(destination)" \
   -only-testing:"$(mval project.scheme)Tests" \
-  -resultBundlePath "$RUNDIR/unit.xcresult" \
-  || die "unit tests failed — see $RUNDIR/unit.xcresult"
+  -resultBundlePath "$bundle" \
+  || die "unit tests failed — see $bundle"
 ok "unit tests"
