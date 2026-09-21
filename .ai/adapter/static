@@ -2,6 +2,12 @@
 # Tier 1: formatting, lint, and a warning-free compile.
 . "$(dirname "$0")/common.sh"
 
+# The gates are the only thing between a diff and main now that CI is gone (ADR-002),
+# and no Swift test touches them. Run their regression suite first: it is fast and a
+# silent regression in the APPROVE check would otherwise be caught by nothing.
+say "static: gate regression tests"
+sh "$ADAPTER/checks/gate-test" || die "gate regression tests failed — the review/scope gates are not enforcing what they claim"
+
 say "static: swift-format lint"
 files=$(git -C "$ROOT" ls-files '*.swift' 2>/dev/null || find "$ROOT" -name '*.swift' -not -path '*/.build/*')
 if [ -z "$files" ]; then

@@ -21,6 +21,18 @@ Paste the tier results from `.ai/run/<issue>/evidence.yml`. Do not hand-write th
 - [ ] runtime — target: `simulator` / `device` (circle one; they are not equivalent)
 
 Evidence commit: `` (must equal this PR's head commit)
+Runtime scenarios: `` (from `evidence.yml runtime.scenarios` — `[]` is not a pass)
+
+# Cold review
+
+`.ai/run/` is gitignored and there is no CI, so this block is the only place the verdict
+leaves the author's machine. Copy it from `.ai/run/<issue>/review.yml`; do not paraphrase.
+
+Verdict: `` (`APPROVE` / `REQUEST_CHANGES`)
+Reviewed commit: `` (must equal this PR's head commit)
+Guarded paths touched: `` (from `scope-check`; `none` if it reported none)
+
+- [ ] `./scripts/ai/flow precheck <issue>` printed `precheck OK`
 
 # Security impact
 

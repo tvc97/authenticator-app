@@ -11,6 +11,12 @@ require_project
 target=${1:-sim}
 scenario=${2:-}
 
+# The streamed device log is per-issue. It used to land in .ai/run/ root, so concurrent
+# issues overwrote each other's log and the secret audit could read another run's. See #25.
+issue=${ISSUE:-scratch}
+mkdir -p "$RUNDIR/$issue"
+devlog="$RUNDIR/$issue/runtime.log"
+
 [ "$target" = device ] && die "device runs are not automated.
   Build to the attached iPhone from Xcode, perform the scenarios in
   docs/testing/security-matrix.md by hand, and record the result as
@@ -41,10 +47,10 @@ run_it() {
   xcrun devicectl device install app --device "$udid" "$app" >/dev/null 2>&1 \
     || die "install failed on $sim_name ($udid)"
 
-  : > "$RUNDIR/runtime.log"
+  : > "$devlog"
   # devicectl has no log-streaming verb; the secret audit still needs simctl for this.
   xcrun simctl spawn "$udid" log stream --style compact --predicate "subsystem CONTAINS '$(mval project.bundle_id)'" \
-    > "$RUNDIR/runtime.log" 2>&1 &
+    > "$devlog" 2>&1 &
   logpid=$!
 
   xcrun devicectl device process launch --device "$udid" "$(mval project.bundle_id)" >/dev/null 2>&1 \
@@ -64,8 +70,8 @@ run_it() {
   sleep 2; kill $logpid 2>/dev/null || true
 
   say "runtime log secret audit"
-  if grep -qiE 'otpauth://|sharedSecret|[A-Z2-7]{16,}' "$RUNDIR/runtime.log"; then
-    die "SECRET MATERIAL FOUND IN RUNTIME LOG — see $RUNDIR/runtime.log"
+  if grep -qiE 'otpauth://|sharedSecret|[A-Z2-7]{16,}' "$devlog"; then
+    die "SECRET MATERIAL FOUND IN RUNTIME LOG — see $devlog"
   fi
   ok "no secret material in runtime log"
 }

@@ -17,8 +17,9 @@ It never reaches a View, a log, or disk outside the Keychain.
 
 ## Why this layering
 
-It makes the security properties testable without a UI, and it makes `frozen_paths`
+It makes the security properties testable without a UI, and it makes `review_paths`
 meaningful: `Crypto/`, `Keychain/` and `Backup/` are small, reviewed, and rarely changed.
+A diff touching them cannot merge without a recorded cold-review APPROVE (ADR-002).
 
 ## To document as it exists
 - data model and schema version

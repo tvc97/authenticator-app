@@ -1,6 +1,10 @@
 #!/bin/sh
 # The orchestrator. Derives state from GitHub + git + evidence, and names the ONE legal next action.
 # State is never stored. Re-run any time; it is idempotent and resumable.
+#
+# Gates: the only states needing a human are the ones an agent physically cannot satisfy --
+# a question addressed to the human, a device that must be plugged in, and the release gate.
+# Everything else is derived from evidence on disk. See ADR-002.
 set -eu
 
 SELF=$(cd "$(dirname "$0")" && pwd)
@@ -18,6 +22,8 @@ usage: ./scripts/ai/flow <command> [issue]
   next [issue]      print the one legal next action
   verify <issue>    run the required tiers and write evidence
   evidence <issue>  print the evidence file and whether it is fresh
+  review <issue>    print the recorded cold-review verdict and whether it is fresh
+  precheck <issue>  everything that must hold before a PR may be opened
   gates             show gate labels and whether they exist in the repo
 USAGE
 }
@@ -25,17 +31,136 @@ USAGE
 head_sha() { git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo "none"; }
 branch()   { b=$(git -C "$ROOT" symbolic-ref --short HEAD 2>/dev/null) && [ -n "$b" ] && printf '%s\n' "$b" || printf 'none\n'; }
 
+# The ref this branch will actually be merged into. For a STACKED branch that is the parent
+# branch, not main -- diffing a stacked branch against main sweeps in the parent's commits
+# and every path check then judges work that is already reviewed elsewhere.
+# Set BASE_REF explicitly for a stacked branch; scope-check honours the same variable.
+base_ref() {
+  if [ -n "${BASE_REF:-}" ]; then
+    git -C "$ROOT" rev-parse --verify "$BASE_REF" >/dev/null 2>&1 \
+      || die "BASE_REF='$BASE_REF' is not a ref in this repository"
+    # A base that already contains HEAD yields an empty diff, which silently makes
+    # touches_app_sources false and blinds the device_required_markers scan -- so
+    # BASE_REF=HEAD would buy a runtime PASS and a green scope gate in one move.
+    if git -C "$ROOT" merge-base --is-ancestor HEAD "$BASE_REF" 2>/dev/null; then
+      die "BASE_REF='$BASE_REF' already contains HEAD. The diff would be empty and every
+  path and marker check would pass vacuously. Set it to the branch this one merges INTO."
+    fi
+    # Mirror of the same hole: BASE_REF=HEAD~1 does not contain HEAD, but it drops whatever
+    # that commit changed from every path and marker check. Require a BRANCH, not any ref --
+    # a tag planted on HEAD~1 hides the same commit. This must stay identical to the rule in
+    # .ai/adapter/checks/scope-check: this copy feeds needs_device and touches_app_sources,
+    # so a divergence lets flow accept a base the scope gate refuses.
+    _cur=$(git -C "$ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || echo "")
+    _named=$(git -C "$ROOT" for-each-ref --format='%(refname:short)' \
+               --points-at "$(git -C "$ROOT" rev-parse "$BASE_REF")" refs/heads/ refs/remotes/ 2>/dev/null \
+             | grep -vx "$_cur" || true)
+    [ -n "$_named" ] || die "BASE_REF='$BASE_REF' is not the tip of a local or remote branch
+  other than this one. Tags and bare commits are refused: a base such as HEAD~1, or a tag
+  pointing at it, excludes what that commit changed from every check.
+  Fix: name the branch this one merges into, e.g. BASE_REF=origin/main."
+    printf '%s\n' "$BASE_REF"; return
+  fi
+  for _br in origin/main main; do
+    git -C "$ROOT" rev-parse --verify "$_br" >/dev/null 2>&1 && { printf '%s\n' "$_br"; return; }
+  done
+  # Never fall back to HEAD. That empties every diff, which makes touches_app_sources
+  # false and hands any change a runtime PASS of "none-required". scope-check may skip a
+  # comparison it cannot make; flow is making a verification CLAIM and must not.
+  die "no base branch found (looked for origin/main, main).
+  flow cannot judge what this branch changed without one, and it will not assume 'nothing'.
+  Fix: git fetch origin, or set BASE_REF to the branch this one merges into."
+}
+
+# --no-renames: see the comment in .ai/adapter/checks/scope-check. A rename out of a guarded
+# directory reports only the destination, and the guard never fires.
+changed_files() { git -C "$ROOT" diff --no-renames --name-only "$(base_ref)"...HEAD 2>/dev/null || true; }
+# Markers are SOURCE-level API usage. Scanning the whole diff makes manifest.yml -- the
+# file that defines the marker list -- match every one of its own markers, so any edit to
+# the list demands a device run. Config naming an API is not the same as code calling it.
+changed_source_diff() {
+  git -C "$ROOT" diff --no-renames "$(base_ref)"...HEAD -- '*.swift' '*.entitlements' '*.plist' 2>/dev/null || true
+}
+
 evidence_file() { printf '%s/%s/evidence.yml' "$RUNDIR" "$1"; }
+review_file()   { printf '%s/%s/review.yml'   "$RUNDIR" "$1"; }
+device_file()   { printf '%s/%s/device.yml'   "$RUNDIR" "$1"; }
+
+# First match only. Two readers disagreeing about one field is how REQUEST CHANGES becomes
+# APPROVE; scope-check parses these files identically.
+yval() { awk -F': *' -v k="$2" '$0 ~ "^"k":" {print $2; exit}' "$1" 2>/dev/null | tr -d ' \r'; }
+
+tier_lines() { awk '/^tiers:/{t=1;next} t && /^[a-z]/{t=0} t' "$1"; }
 
 evidence_fresh() {
-  f=$(evidence_file "$1"); [ -f "$f" ] || return 1
-  c=$(awk -F': *' '/^commit:/{print $2}' "$f" | tr -d ' ')
-  [ "$c" = "$(head_sha)" ]
+  _ef=$(evidence_file "$1"); [ -f "$_ef" ] || return 1
+  [ "$(yval "$_ef" commit)" = "$(head_sha)" ]
 }
 
 evidence_all_pass() {
-  f=$(evidence_file "$1"); [ -f "$f" ] || return 1
-  ! awk '/^tiers:/{t=1;next} t && /^[a-z]/{t=0} t' "$f" | grep -qE ':[[:space:]]*(FAIL|SKIP)'
+  _ea=$(evidence_file "$1"); [ -f "$_ea" ] || return 1
+  ! tier_lines "$_ea" | grep -qE ':[[:space:]]*(FAIL|SKIP)'
+}
+
+# True when runtime is the ONLY tier that is not PASS.
+evidence_only_runtime_short() {
+  _eo=$(evidence_file "$1"); [ -f "$_eo" ] || return 1
+  tier_lines "$_eo" | grep -qE '^[[:space:]]*runtime:[[:space:]]*SKIP' || return 1
+  ! tier_lines "$_eo" | grep -vE '^[[:space:]]*runtime:' | grep -qE ':[[:space:]]*(FAIL|SKIP)'
+}
+
+review_fresh() {
+  _rf=$(review_file "$1"); [ -f "$_rf" ] || return 1
+  [ "$(yval "$_rf" commit)" = "$(head_sha)" ]
+}
+
+# Normalised: uppercase, spaces stripped. The reviewer agent is told to return
+# "REQUEST CHANGES"; review.yml documents "REQUEST_CHANGES". Both must land in one bucket,
+# or a rejection silently reads as "no verdict" and the review loops forever.
+review_verdict() {
+  _rv=$(review_file "$1"); [ -f "$_rv" ] || { echo ""; return; }
+  _rvv=$(yval "$_rv" verdict | tr '[:lower:]' '[:upper:]' | tr -d '_-')
+  case "$_rvv" in "") echo "" ;; APPROVE) echo "APPROVE" ;; *) echo "CHANGES_REQUIRED" ;; esac
+}
+
+device_run_ok() {
+  _dr=$(device_file "$1"); [ -f "$_dr" ] || return 1
+  [ "$(yval "$_dr" commit)" = "$(head_sha)" ] || return 1
+  [ "$(yval "$_dr" result | tr '[:lower:]' '[:upper:]')" = "PASS" ]
+}
+
+# Does this issue's runtime tier require a PHYSICAL device?
+#
+# Fails CLOSED. "Could not determine" is answered yes, because the cost of a wrong no is
+# recording a simulator run as device verification -- the exact collapse CLAUDE.md forbids.
+# sh has no local scope: every name here is underscore-prefixed so it cannot collide with a
+# caller's. cmd_verify uses $d for its run directory, and this function overwriting it with
+# the whole diff is a bug that only shows up as "File name too long".
+needs_device() {
+  _nd_issue=$1
+  # 1. Observable in the diff, regardless of how the issue was labelled.
+  _nd_diff=$(changed_source_diff)
+  if [ -n "$_nd_diff" ]; then
+    for _nd_m in $(mlist device_required_markers); do
+      printf '%s' "$_nd_diff" | grep -E '^[+-]' | grep -qF "$_nd_m" && return 0
+    done
+  fi
+  # 2. The explicit label. Unreadable labels are not a no.
+  have_gh || return 0
+  gh issue view "$_nd_issue" --json labels --jq '.labels[].name' 2>/dev/null | grep -qx "device-required" && return 0
+  gh issue view "$_nd_issue" --json labels >/dev/null 2>&1 || return 0
+  return 1
+}
+
+# Does the diff change app behaviour a user could exercise? If so, a launch-only runtime run
+# is not the whole claim -- CLAUDE.md defines the tier as "launched AND the flow worked".
+touches_app_sources() {
+  changed_files | grep -E '\.swift$' | grep -vE '(Tests|UITests)/' | grep -q .
+}
+
+scenario_for() {
+  _sf="$ROOT/.ai/scenarios/$1.sh"
+  [ -x "$_sf" ] && printf '%s\n' "$_sf" || printf '\n'
 }
 
 derive() {
@@ -47,7 +172,12 @@ derive() {
 
   if ! have_gh; then
     if [ "$(branch)" = "main" ]; then echo "READY_TO_START"; else
-      if evidence_fresh "$issue" && evidence_all_pass "$issue"; then echo "AWAITING_REVIEW(offline)"; else echo "IMPLEMENTING(offline)"; fi
+      if evidence_fresh "$issue" && evidence_all_pass "$issue"; then
+        review_fresh "$issue" && [ "$(review_verdict "$issue")" = "APPROVE" ] \
+          && echo "READY_TO_MERGE(offline)" || echo "AWAITING_REVIEW(offline)"
+      elif evidence_fresh "$issue" && evidence_only_runtime_short "$issue" && needs_device "$issue"; then
+        echo "DEVICE_RUN_REQUIRED(offline)"
+      else echo "IMPLEMENTING(offline)"; fi
     fi
     return
   fi
@@ -56,28 +186,31 @@ derive() {
   closed=$(printf '%s' "$st" | jq -r '.state')
   labels=$(printf '%s' "$st" | jq -r '.labels[].name' | tr '\n' ' ')
 
-  pr=$(gh pr list --search "$issue in:body" --json number,reviewDecision,statusCheckRollup --limit 1 2>/dev/null || echo '[]')
-  prnum=$(printf '%s' "$pr" | jq -r '.[0].number // empty')
-
   case " $labels " in *" needs:clarification "*) echo "BLOCKED_NEEDS_CLARIFICATION"; return ;; esac
   [ "$closed" = "CLOSED" ] && { echo "COMPLETE"; return; }
 
   case " $labels " in
-    *" gate:plan-approved "*) : ;;
-    *) case " $labels " in *" has:plan "*) echo "AWAITING_PLAN_APPROVAL"; return ;;
-                            *) echo "RESEARCH"; return ;; esac ;;
+    *" has:plan "*) : ;;
+    *) echo "RESEARCH"; return ;;
   esac
+
+  pr=$(gh pr list --search "$issue in:body" --json number --limit 1 2>/dev/null || echo '[]')
+  prnum=$(printf '%s' "$pr" | jq -r '.[0].number // empty')
 
   [ -z "$prnum" ] && {
     git -C "$ROOT" show-ref --verify --quiet "refs/heads/$(git -C "$ROOT" branch --list "*/$issue-*" | head -1 | tr -d ' *')" 2>/dev/null \
       && echo "IMPLEMENTING" || echo "READY_TO_START"; return; }
 
-  if ! evidence_fresh "$issue" || ! evidence_all_pass "$issue"; then echo "VERIFYING"; return; fi
-  rd=$(printf '%s' "$pr" | jq -r '.[0].reviewDecision // empty')
-  checks=$(printf '%s' "$pr" | jq -r '[.[0].statusCheckRollup[]?.conclusion] | if length==0 then "NONE" elif all(.=="SUCCESS") then "GREEN" else "RED" end')
-  case "$rd" in
-    CHANGES_REQUESTED) echo "CHANGES_REQUIRED" ;;
-    APPROVED) [ "$checks" = "GREEN" ] && echo "READY_TO_MERGE" || echo "VERIFYING(ci:$checks)" ;;
+  if ! evidence_fresh "$issue" || ! evidence_all_pass "$issue"; then
+    if evidence_fresh "$issue" && evidence_only_runtime_short "$issue" && needs_device "$issue"; then
+      echo "DEVICE_RUN_REQUIRED"; return
+    fi
+    echo "VERIFYING"; return
+  fi
+
+  case "$(review_verdict "$issue")" in
+    CHANGES_REQUIRED) echo "CHANGES_REQUIRED" ;;
+    APPROVE) review_fresh "$issue" && echo "READY_TO_MERGE" || echo "AWAITING_REVIEW(stale)" ;;
     *) echo "AWAITING_REVIEW" ;;
   esac
 }
@@ -86,10 +219,12 @@ next_action() {
   case "$1" in
     INTAKE)                     echo "/intake  — describe the change; an issue with acceptance criteria gets created" ;;
     RESEARCH)                   echo "/preflight $2 then /plan $2  — read the ledger, then write the plan" ;;
-    AWAITING_PLAN_APPROVAL)     echo "HUMAN: review the plan, then: gh issue edit $2 --add-label gate:plan-approved" ;;
-    READY_TO_START)             echo "/implement $2  — creates worktree + branch, then implements the approved plan" ;;
+    READY_TO_START)             echo "/implement $2  — creates worktree + branch, then implements the plan" ;;
     IMPLEMENTING*)              echo "/implement $2  — continue; verify after each small step" ;;
     VERIFYING*)                 echo "./scripts/ai/flow verify $2  — run tiers and write evidence" ;;
+    DEVICE_RUN_REQUIRED*)       echo "HUMAN: this change cannot be verified on a simulator. Build to the iPhone,
+       run the scenarios in docs/testing/security-matrix.md, then record the result:
+       .ai/run/$2/device.yml  ->  commit: <HEAD>  device: \"<name> / <iOS>\"  result: PASS" ;;
     AWAITING_REVIEW*)           echo "/review $2  — cold reviewer subagent, no implementation context" ;;
     CHANGES_REQUIRED)           echo "/implement $2  — address the numbered review items, then re-verify" ;;
     READY_TO_MERGE)             echo "/integrate $2  — merge, close, update milestone" ;;
@@ -103,31 +238,100 @@ cmd_verify() {
   issue=$1
   d="$RUNDIR/$issue"; mkdir -p "$d"
   start=$(date -u +%Y-%m-%dT%H:%M:%SZ); t0=$(date +%s)
+  vbase=$(base_ref); vbase_sha=$(git -C "$ROOT" rev-parse --short "$vbase")
   : > "$d/tiers.tmp"
   status=PASS
   for tier in $(mlist tiers); do
     [ "$tier" = runtime ] && continue
     if [ "$status" = PASS ]; then
-      if sh "$ADAPTER/$tier" >"$d/$tier.log" 2>&1; then r=PASS; else r=FAIL; status=FAIL; fi
+      if sh "$ADAPTER/$tier" "$issue" >"$d/$tier.log" 2>&1; then r=PASS; else r=FAIL; status=FAIL; fi
     else r=SKIP; fi
     printf '  %-12s %s\n' "$tier:" "$r" >> "$d/tiers.tmp"
     printf '%-12s %s\n' "$tier" "$r"
   done
-  printf '  %-12s %s\n' "runtime:" "SKIP" >> "$d/tiers.tmp"
-  printf '%-12s %s  (run ./.ai/adapter/run sim and record it)\n' "runtime" "SKIP"
+
+  # Runtime.
+  #
+  # PASS requires the whole claim, not half of it. CLAUDE.md defines the tier as "the app
+  # actually launched AND the flow actually worked", so a launch-only run only earns PASS
+  # when there is no user-facing flow to drive. A device run is never automatic -- nobody
+  # can plug in a phone on the agent's behalf -- so it is read from a recorded device.yml.
+  rt_target=none; rt_device=""; rt_scen="[]"; rt_reason=""
+  scen=$(scenario_for "$issue")
+  if [ "$status" != PASS ]; then
+    rt=SKIP; rt_reason="an earlier tier failed; runtime was not attempted"
+  elif needs_device "$issue"; then
+    if device_run_ok "$issue"; then
+      rt=PASS; rt_target=device
+      rt_device="$(yval "$(device_file "$issue")" device)"
+      rt_scen="recorded in device.yml"
+    else
+      rt=SKIP
+      rt_reason="device run required (label or a device_required_markers hit in the diff) and no fresh .ai/run/$issue/device.yml records one"
+    fi
+  elif ISSUE="$issue" sh "$ADAPTER/run" sim "$scen" >"$d/runtime-tier.log" 2>&1; then
+    rt_target=sim
+    rt_device="$(mval simulator.name) / $(mval simulator.runtime) (reality: simulated)"
+    if [ -n "$scen" ]; then
+      rt=PASS; rt_scen="driven by $scen"
+    elif touches_app_sources; then
+      rt=SKIP
+      rt_reason="app sources changed but no scenario script drove a user flow; launch and log audit alone are not the runtime claim. Add .ai/scenarios/$issue.sh"
+    else
+      rt=PASS; rt_scen="none-required (no app source changed; launch and log secret audit are the whole claim)"
+    fi
+  else
+    rt=FAIL; status=FAIL; rt_reason="see .ai/run/$issue/runtime-tier.log"
+  fi
+  [ "$rt" = SKIP ] && [ "$status" = PASS ] && status=INCOMPLETE
+  printf '  %-12s %s\n' "runtime:" "$rt" >> "$d/tiers.tmp"
+  printf '%-12s %s\n' "runtime" "$rt"
 
   {
-    printf 'issue: %s\ncommit: %s\nstarted: %s\nduration_s: %s\n\ntiers:\n' \
-      "$issue" "$(head_sha)" "$start" "$(( $(date +%s) - t0 ))"
+    # The base is part of the claim. "no app source changed" is only true relative to
+    # something, and without this line the runtime verdict is not reproducible from the
+    # repo plus the documented command -- it depends on an unrecorded BASE_REF.
+    printf 'issue: %s\ncommit: %s\nbase: %s @ %s\nstarted: %s\nduration_s: %s\n\ntiers:\n' \
+      "$issue" "$(head_sha)" "$vbase" "$vbase_sha" "$start" "$(( $(date +%s) - t0 ))"
     cat "$d/tiers.tmp"
-    printf '\nruntime:\n  target: none\n  scenarios: []\n\nunverified:\n'
+    printf '\nruntime:\n  target: %s\n' "$rt_target"
+    [ -n "$rt_device" ] && printf '  device: "%s"\n' "$rt_device"
+    printf '  scenarios: %s\n\nunverified:\n' "$rt_scen"
     awk '$2 != "PASS" { sub(/:$/, "", $1); printf "  - id: %s\n    reason: \"tier reported %s\"\n", $1, $2 }' "$d/tiers.tmp"
+    [ -n "$rt_reason" ] && printf '  - id: runtime-detail\n    reason: "%s"\n' "$rt_reason"
     printf '\nadapter:\n  platform: %s\n  xcode: "%s"\n  simulator: "%s / %s"\n' \
       "$(mval platform)" "$(mval toolchain.xcode)" "$(mval simulator.name)" "$(mval simulator.runtime)"
   } > "$d/evidence.yml"
   rm -f "$d/tiers.tmp"
   say "evidence written: .ai/run/$issue/evidence.yml"
-  [ "$status" = PASS ] || die "verification failed — see .ai/run/$issue/*.log"
+  case "$status" in
+    PASS) : ;;
+    INCOMPLETE) die "a required tier did not run — see unverified: in .ai/run/$issue/evidence.yml
+  This is not a failure and not a pass. Resolve it; do not edit the file." ;;
+    *) die "verification failed — see .ai/run/$issue/*.log" ;;
+  esac
+}
+
+# Everything that must hold before a PR may exist. The deleted CI used to run scope-check;
+# nothing else does, so this is the only automatic caller. See ADR-002.
+cmd_precheck() {
+  issue=$1
+  say "precheck #$issue (base: $(base_ref))"
+  evidence_fresh "$issue" || die "evidence for #$issue is missing or STALE — run: ./scripts/ai/flow verify $issue"
+  evidence_all_pass "$issue" || die "evidence for #$issue has a tier that is not PASS — see .ai/run/$issue/evidence.yml"
+  ok "evidence fresh and all-PASS"
+
+  # The evidence was computed against SOME base. If precheck resolves a different one, the
+  # tiers answered a different question than the gate is about to ask -- most visibly after
+  # the parent of a stacked branch merges, which moves origin/main under a recorded base.
+  _pb=$(yval "$(evidence_file "$issue")" base | sed 's/@.*//')
+  _cb=$(base_ref)
+  [ -z "$_pb" ] || [ "$_pb" = "$_cb" ] || die "evidence for #$issue was verified against
+  base '$_pb', but precheck resolves '$_cb'. The tiers answered a different question.
+  Fix: re-run ./scripts/ai/flow verify $issue against the base this PR will target."
+  ok "base agrees with the evidence: $_cb"
+  sh "$ADAPTER/checks/scope-check" "$(base_ref)" "$issue" || exit 1
+  ok "precheck OK — a PR may be opened"
 }
 
 case "${1:-}" in
@@ -135,9 +339,12 @@ case "${1:-}" in
               "$(branch)" "$(head_sha)" "${2:-auto}" "$s" ;;
   next)     s=$(derive "${2:-}"); printf 'STATE: %s\nNEXT:  %s\n' "$s" "$(next_action "$s" "${2:-<issue>}")" ;;
   verify)   [ -n "${2:-}" ] || { usage; exit 1; }; cmd_verify "$2" ;;
+  precheck) [ -n "${2:-}" ] || { usage; exit 1; }; cmd_precheck "$2" ;;
   evidence) f=$(evidence_file "${2:?issue required}"); [ -f "$f" ] || die "no evidence for #$2"
             cat "$f"; evidence_fresh "$2" && ok "fresh (matches HEAD)" || die "STALE — HEAD moved since verification" ;;
-  gates)    for l in gate:plan-approved gate:release-approved needs:clarification has:plan; do
+  review)   f=$(review_file "${2:?issue required}"); [ -f "$f" ] || die "no cold review for #$2 — run /review $2"
+            cat "$f"; review_fresh "$2" && ok "fresh (matches HEAD)" || die "STALE — HEAD moved since review" ;;
+  gates)    for l in gate:release-approved needs:clarification has:plan device-required; do
               if have_gh && gh label list --json name --jq '.[].name' 2>/dev/null | grep -qx "$l"; then ok "$l"; else printf '  MISSING  %s\n' "$l"; fi
             done
             have_gh || warn "gh not authenticated — cannot check labels" ;;

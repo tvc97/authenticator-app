@@ -1,6 +1,6 @@
 # ADR-001: Operate this repository as an AI-native development system
 
-Status: accepted
+Status: accepted — amended by ADR-002
 Date: 2026-09-20
 
 ## Context
@@ -14,6 +14,8 @@ project memory, and a model's assertion that something works is not evidence.
 - **GitHub is the only state store.** Workflow state is derived from issues, labels,
   branches, PRs and checks. No state file is committed.
 - **Gates are labels**, not prose: `gate:plan-approved`, `gate:release-approved`.
+  *(ADR-002 removed `gate:plan-approved`: a gate now exists only where the agent physically
+  cannot act. `gate:release-approved` remains.)*
 - **Completion is an evidence file** (`.ai/run/<issue>/evidence.yml`) whose `commit`
   matches HEAD, with every required tier `PASS`. A Stop hook enforces this.
 - **Commands live in an adapter** (`.ai/adapter/`), eight verbs, with project facts in
@@ -40,3 +42,10 @@ project memory, and a model's assertion that something works is not evidence.
 
 Signing, entitlements, credentials, hooks and release gates are **frozen paths**: an agent
 may propose changes but never apply them.
+
+*(Amended by ADR-002. `frozen_paths` split in two. Signing, credentials, entitlements,
+`Info.plist`, the hooks and `settings.json` became `human_paths` — an agent cannot write them
+at all, which is what the sentence above was reaching for. Crypto, Keychain, Backup, the
+adapter and `scripts/ai/**` became `review_paths`: an agent may apply changes there, but they
+do not land without a recorded cold-review APPROVE at the current HEAD. `gate:release-approved`
+is unchanged.)*

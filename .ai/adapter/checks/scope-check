@@ -1,18 +1,163 @@
 #!/bin/sh
-# Assert the diff stayed inside the plan, and touched no frozen path.
-# usage: scope-check <base-ref>
+# Assert the diff touched no human-only path, and that any review_path change carries a
+# recorded APPROVE from the cold reviewer.
+# usage: scope-check <base-ref> [issue]
 . "$(dirname "$0")/../common.sh"
-base=${1:-origin/main}
+# Patterns from the manifest are handled as text. Without -f the shell expands an unquoted
+# "**/Crypto/**" against the working tree and reports files instead of the rule that matched.
+set -f
+# BASE_REF wins, then $1, then origin/main. A stacked branch must be judged against its
+# parent branch; against main it re-litigates the parent's diff. scripts/ai/flow passes
+# the same value it uses for every other path check.
+base=${BASE_REF:-${1:-origin/main}}
+# Was the base chosen by the operator, or defaulted? An operator-supplied base that
+# contains HEAD is always wrong; the DEFAULT resolving to HEAD is the ordinary
+# "on main, nothing to compare" case and is allowed to report "no changes".
+base_explicit=no
+[ -n "${BASE_REF:-}" ] || [ -n "${1:-}" ] && base_explicit=yes
 git -C "$ROOT" rev-parse --verify HEAD >/dev/null 2>&1 || { warn "no commits yet — scope check skipped"; exit 0; }
-git -C "$ROOT" rev-parse --verify "$base" >/dev/null 2>&1 || { warn "base ref '$base' not found — scope check skipped"; exit 0; }
-changed=$(git -C "$ROOT" diff --name-only "$base"...HEAD)
+# FAIL CLOSED. This used to warn and exit 0, which meant a typo'd or unfetched base ref
+# silently disabled the human-path and review-path checks entirely -- the whole gate, off,
+# with a yellow WARN as the only trace. A gate that skips itself when confused is not a gate.
+git -C "$ROOT" rev-parse --verify "$base" >/dev/null 2>&1 || die "base ref '$base' not found.
+  The scope gate cannot run without a base to diff against, and it will not skip itself.
+  Fix: git fetch origin, or set BASE_REF to the branch this one will merge into."
+
+# A base that CONTAINS HEAD produces an empty diff, which every rule below then "passes".
+# BASE_REF=HEAD, or BASE_REF=<this branch>, would switch the whole gate green through a
+# door the not-found check does not cover. Equality counts: BASE_REF=HEAD is the exploit,
+# not an edge case. Only a DEFAULTED base is allowed to be an ancestor of HEAD.
+if [ "$base_explicit" = yes ] \
+   && git -C "$ROOT" merge-base --is-ancestor HEAD "$base" 2>/dev/null; then
+  die "base ref '$base' already contains HEAD, so the diff is empty and every rule below
+  would pass vacuously. That is the gate switching itself off, not a clean branch.
+  Fix: set BASE_REF to the branch this one will actually merge INTO."
+fi
+# An explicit base must be the TIP OF A REF other than the current branch.
+#
+# The ancestor check above only asks "does the base contain HEAD". It never asks the mirror
+# question, so BASE_REF=HEAD~1 quietly drops the commit that touched a guarded path and
+# every rule below passes. Requiring a named ref kills HEAD~n and raw SHAs while leaving
+# the stacked-branch case (BASE_REF=<parent branch>) working.
+if [ "$base_explicit" = yes ]; then
+  _cur=$(git -C "$ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || echo "")
+  _named=$(git -C "$ROOT" for-each-ref --format='%(refname:short)' \
+             --points-at "$(git -C "$ROOT" rev-parse "$base")" refs/heads/ refs/remotes/ 2>/dev/null \
+           | grep -vx "$_cur" || true)
+  [ -n "$_named" ] || die "base ref '$base' is not the tip of a local or remote BRANCH other
+  than the one being checked. Tags and bare commits are refused on purpose: a base such as
+  HEAD~1 -- or a tag pointing at it -- silently excludes whatever that commit changed,
+  which is how a guarded path reaches main with the gate green.
+  Fix: name the branch this one merges into, e.g. BASE_REF=origin/main."
+  # Residual, and inherent to supporting stacked branches: a branch planted on an older
+  # commit (git branch x HEAD~1) is indistinguishable from a genuine parent and still
+  # narrows the diff. The anomalous base is at least recorded in evidence.yml and
+  # cross-checked by `flow precheck`.
+fi
+
+# --no-renames is load-bearing. With rename detection on, moving Sources/Crypto/HMAC.swift
+# to Sources/Util/HMAC.swift reports ONLY the destination, so no rule matches and crypto
+# walks out of a guarded directory unreviewed. Without it, both paths are reported.
+changed=$(git -C "$ROOT" diff --no-renames --name-only "$base"...HEAD)
 [ -n "$changed" ] || { ok "no changes"; exit 0; }
 
-say "frozen path check"
+issue=${2:-}
+if [ -z "$issue" ]; then
+  b=$(git -C "$ROOT" symbolic-ref --short HEAD 2>/dev/null || echo "")
+  issue=$(printf '%s' "$b" | sed -n 's|^[a-z]*/\([0-9]\{1,\}\)-.*|\1|p')
+fi
+
+# glob_re <manifest glob> -> the ERE it converts to
+glob_re() { printf '%s' "$1" | sed 's|\*\*/||g; s|\*|.*|g'; }
+
+# pat_hits <glob> -> the changed files matching it, empty if none.
+#
+# -i because the guarded paths are a security rule, not a spelling convention: on a
+# case-insensitive filesystem authenticator/info.plist and INFO.PLIST are the same file, and
+# a case-sensitive matcher would wave both past the human_paths check.
+#
+# No `die` in here. This runs inside $( ), so a die would exit the command substitution
+# subshell, and at the review_paths loop -- where the call sits inside `[ -n "$(...)" ] &&`
+# -- neither the status nor `set -e` propagates. The rule would be read as "no match" and
+# the gate would go green with that rule switched off. Patterns are validated below, in the
+# parent shell, so by the time this runs the only possible failure is a genuine no-match.
+pat_hits() { printf '%s\n' "$changed" | grep -Ei "$(glob_re "$1")" || true; }
+
+# Validate every pattern ONCE, in the parent shell, before any rule runs.
+#
+# grep exits 1 for "no match" and 2 for "bad pattern". A manifest entry that is not a valid
+# ERE would otherwise silently match nothing and switch its own rule off while the gate
+# reported PASS -- fail open, in the one function every rule depends on.
+validate_patterns() {
+  for pat in $(mlist "$1"); do
+    # Status must be captured in an `if`: a bare `grep -q` returning 1 for "no match" would
+    # be a plain failing command, and `set -e` from common.sh would kill the script.
+    if printf '' | grep -Eiq "$(glob_re "$pat")" 2>/dev/null; then _vst=0; else _vst=$?; fi
+    [ "$_vst" -le 1 ] || die "manifest.yml $1 entry '$pat' is not a valid regular expression
+  (it converts to '$(glob_re "$pat")'). Refusing to report PASS for a rule set that
+  cannot be evaluated."
+  done
+}
+
+# An empty list is not a satisfied list. If the manifest key is missing or renamed, the
+# for-loop below simply never runs and every guarded path reports PASS.
+[ -n "$(mlist human_paths)" ]  || die "manifest.yml has no human_paths list. Refusing to
+  report PASS for a rule set that could not be read."
+[ -n "$(mlist review_paths)" ] || die "manifest.yml has no review_paths list. Refusing to
+  report PASS for a rule set that could not be read."
+validate_patterns human_paths
+validate_patterns review_paths
+
+say "human-only path check"
 hit=0
-for pat in $(mlist frozen_paths); do
-  glob=$(printf '%s' "$pat" | sed 's|\*\*/||g; s|\*|.*|g')
-  printf '%s\n' "$changed" | grep -E "$glob" >/dev/null 2>&1 && { printf '\033[31m  FROZEN\033[0m %s\n' "$pat"; hit=1; }
+for pat in $(mlist human_paths); do
+  files=$(pat_hits "$pat")
+  if [ -n "$files" ]; then
+    printf '\033[31m  HUMAN\033[0m %s\n' "$pat"
+    printf '           %s\n' $files
+    hit=1
+  fi
 done
-[ "$hit" -eq 0 ] && ok "no frozen paths touched" || die "frozen paths modified — this requires explicit human review.
-  Frozen paths hold crypto, Keychain, entitlements and the workflow's own guards."
+[ "$hit" -eq 0 ] && ok "no human-only paths touched" || die "human-only paths modified.
+  Entitlements and Info.plist are the app's capability boundary. An agent cannot edit
+  them: settings.json denies it and pre-tool-safety.sh blocks it. A human makes this
+  change in Xcode, with an ADR recording why."
+
+say "review-required path check"
+touched=""
+for pat in $(mlist review_paths); do
+  [ -n "$(pat_hits "$pat")" ] && touched="$touched $pat"
+done
+
+if [ -z "$touched" ]; then
+  ok "no review-required paths touched"
+  exit 0
+fi
+printf '  REVIEW  %s\n' $touched
+
+[ -n "$issue" ] || die "review-required paths touched, but no issue could be derived from
+  the branch name. Expected '<type>/<issue>-<slug>', e.g. feature/12-qr-import.
+  Fix: rename the branch, or pass it: scope-check $base <issue>"
+
+rv="$RUNDIR/$issue/review.yml"
+[ -f "$rv" ] || die "review-required paths touched, but no cold review is on record.
+  Missing: .ai/run/$issue/review.yml
+  Fix: /review $issue   # delegates to the reviewer subagent, which writes the verdict"
+
+# First match only, and uppercased with spaces collapsed -- scripts/ai/flow reads this same
+# file the same way. Two readers disagreeing about one verdict is how a REQUEST CHANGES
+# becomes an APPROVE.
+verdict=$(awk -F': *' '/^verdict:/{print $2; exit}' "$rv" | tr -d ' \r' | tr '[:lower:]' '[:upper:]')
+rcommit=$(awk -F': *' '/^commit:/{print $2; exit}' "$rv" | tr -d ' \r')
+head=$(git -C "$ROOT" rev-parse --short HEAD)
+
+[ "$verdict" = "APPROVE" ] || die "cold review verdict is '$verdict', not APPROVE.
+  The numbered items are in .ai/run/$issue/review.yml
+  Fix: address every item, re-run flow verify, then /review $issue again."
+
+[ "$rcommit" = "$head" ] || die "cold review is STALE.
+  reviewed: $rcommit
+  HEAD:     $head
+  A commit landed after the review. Re-run: /review $issue"
+
+ok "cold review APPROVE on $head"

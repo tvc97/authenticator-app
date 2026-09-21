@@ -40,7 +40,19 @@ Keychain. These are not style preferences; they are correctness requirements.
 - Pasteboard writes of a code must set an expiry and must not sync to other devices.
 - Biometric/passcode gate is a security boundary, not a UI state. Changing it requires an ADR.
 - Crypto is HMAC/base32 from a reviewed implementation. Do not hand-roll, do not "optimize".
-- Any change touching a path in `manifest.yml: frozen_paths` stops for human review.
+- `manifest.yml: human_paths` (entitlements, `Info.plist`, `.claude/hooks/**`,
+  `.claude/settings.json`) are not an agent's to change. A human changes these, with an ADR.
+  Know what actually enforces that, because every tool-layer block has the same gap:
+  `pre-tool-safety.sh` reads `file_path`, so it blocks `Edit`, `Write` and `NotebookEdit`
+  on entitlements, `Info.plist` and credential files — but `file_path` is empty for `Bash`,
+  so a shell redirect walks past it. The `settings.json` deny list blocks the **Edit tool**
+  on `.claude/hooks/**` and `.claude/settings.json`, and likewise not `git rm` or a heredoc.
+  **`scope-check`'s `human_paths` rule is the only layer that sees all of them**, because it
+  reads the diff rather than the tool call. Do not read a gap in the tool blocks as permission.
+- `manifest.yml: review_paths` (Crypto, Keychain, Backup, `.ai/adapter/**`, `scripts/ai/**`,
+  `.github/**`) may be changed, but the change is not done until `/review` records
+  `verdict: APPROVE` against the current HEAD in `.ai/run/<issue>/review.yml`.
+  `scope-check` enforces it.
 
 ## Architecture
 
@@ -59,6 +71,10 @@ Keychain. These are not style preferences; they are correctness requirements.
 
 ## Verification
 
+There is no CI. Nothing runs on GitHub's compute — `macos-15` runners bill at a 10x minute
+multiplier, and the tiers already run here and already write evidence. So the tiers run on
+this machine or they do not run at all, and they run **before** the PR exists, not after.
+
 Tiers run in order and stop at the first failure:
 
 1. `static` — swift-format lint + build warnings as errors
@@ -66,6 +82,19 @@ Tiers run in order and stop at the first failure:
 3. `integration` — UI tests on simulator
 4. `security` — secret-leak scan, entitlement check, pasteboard/log audit
 5. `runtime` — the app actually launched and the flow actually worked
+
+`./scripts/ai/flow verify <issue>` runs 1–4 and then resolves runtime. Tier 5 means
+*launched **and** the flow worked*, so a launch alone earns `PASS` only when no app source
+changed — tooling work has no user flow to drive. An app-source change with no
+`.ai/scenarios/<issue>.sh` is `SKIP`.
+
+A **device** run is never automatic; no agent can plug in a phone. It is required by the
+`device-required` label **or** by a `manifest.yml: device_required_markers` hit in the diff,
+and it is satisfied only by a recorded `.ai/run/<issue>/device.yml`. The check fails closed:
+if the requirement cannot be determined, the answer is "device required".
+
+Before opening a PR: `./scripts/ai/flow precheck <issue>`. It re-checks evidence and runs
+`scope-check`, which has no other automatic caller now that CI is gone.
 
 `SKIP` and `PASS` are different values. Never write `PASS` for a tier that did not run.
 Simulator-verified and device-verified are different claims. Never collapse them.
@@ -76,10 +105,24 @@ TOTP correctness depends on the clock. The simulator clock is not the device clo
 Any change to code generation, drift handling, or counter math requires a device run
 with a deliberately skewed clock. See `docs/testing/security-matrix.md`.
 
+## Gates
+
+Only three things wait on a human, and each waits because an agent physically cannot do it:
+
+1. **`needs:clarification`** — a question addressed to the human.
+2. **A device run** — someone has to plug in the iPhone.
+3. **`gate:release-approved`** — publishing needs the human's Apple credentials, and is
+   outward-facing and irreversible.
+
+Everything else is derived from evidence on disk. Removing an approval gate did not remove a
+security requirement: every rule above still binds. See ADR-002.
+
 ## Completion
 
 You may write `DONE` only when `.ai/run/<issue>/evidence.yml` exists, its `commit`
-equals `HEAD`, and every tier the issue requires is `PASS`.
+equals `HEAD`, and every tier the issue requires is `PASS`. If the diff touched a
+`review_path`, `.ai/run/<issue>/review.yml` must also read `verdict: APPROVE` at that
+same commit.
 
 Otherwise write:
 

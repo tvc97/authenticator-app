@@ -1,0 +1,279 @@
+#!/bin/sh
+# Regression test for the gates themselves.
+#
+# scope-check and the flow state machine are the whole compensating control introduced by
+# ADR-002: no CI, no human approver, so a silent regression in the APPROVE check or the
+# human-path match would not be caught by anything. The Swift tiers do not exercise a line
+# of it. This does.
+#
+# Runs against a throwaway git repo in a temp dir. Touches nothing in the real tree.
+set -eu
+
+# The caller may be verifying a stacked branch with BASE_REF set. These fixtures are
+# throwaway repos where that ref does not exist, and scope-check now fails closed on an
+# unknown base -- correctly. Clear it so the tests exercise the rules, not the guard.
+unset BASE_REF
+
+SELF=$(cd "$(dirname "$0")" && pwd)
+REPO=$(cd "$SELF/../../.." && pwd)
+pass=0; fail=0
+
+green() { printf '\033[32m  PASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
+red()   { printf '\033[31m  FAIL\033[0m %s\n' "$1"; fail=$((fail+1)); }
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT INT TERM
+
+# A minimal repo that satisfies common.sh: it only needs .ai/adapter/manifest.yml to exist.
+setup() {
+  rm -rf "$TMP/wt"; mkdir -p "$TMP/wt/.ai/adapter/checks"
+  cp "$REPO/.ai/adapter/manifest.yml" "$TMP/wt/.ai/adapter/manifest.yml"
+  cp "$REPO/.ai/adapter/common.sh"    "$TMP/wt/.ai/adapter/common.sh"
+  cp "$REPO/.ai/adapter/checks/scope-check" "$TMP/wt/.ai/adapter/checks/scope-check"
+  chmod +x "$TMP/wt/.ai/adapter/checks/scope-check"
+  git -C "$TMP/wt" init -q
+  git -C "$TMP/wt" config user.email t@t.t
+  git -C "$TMP/wt" config user.name t
+  git -C "$TMP/wt" add -A
+  git -C "$TMP/wt" commit -qm base
+  git -C "$TMP/wt" branch -M main
+  git -C "$TMP/wt" checkout -qb task/99-gate-test
+}
+
+# run_check -> sets $out and $st. ALWAYS assert $st: the exit status is the contract
+# `flow precheck` depends on, and a gate that prints "BLOCKED" while exiting 0 blocks
+# nothing. Seven assertions here once matched on text alone and stayed green against
+# exactly that.
+run_check() {
+  if out=$( ( cd "$TMP/wt" && ./.ai/adapter/checks/scope-check main 99 ) 2>&1 ); then st=0; else st=$?; fi
+}
+
+# refuses "<label>" "<expected substring>"
+refuses() {
+  if [ "$st" -eq 0 ]; then
+    red "$1 — scope-check exited 0; it refused nothing"
+  else
+    case "$out" in
+      *"$2"*) green "$1" ;;
+      *) red "$1 — refused (exit $st) but for the wrong reason: $out" ;;
+    esac
+  fi
+}
+
+# permits "<label>"
+permits() {
+  [ "$st" -eq 0 ] && green "$1" || red "$1 — scope-check exited $st: $out"
+}
+
+commit_file() {
+  mkdir -p "$TMP/wt/$(dirname "$1")"
+  printf '%s\n' "$2" > "$TMP/wt/$1"
+  git -C "$TMP/wt" add -A
+  git -C "$TMP/wt" commit -qm "touch $1"
+}
+
+write_review() {
+  mkdir -p "$TMP/wt/.ai/run/99"
+  { printf 'issue: 99\ncommit: %s\nverdict: %s\n' "$1" "$2"; } > "$TMP/wt/.ai/run/99/review.yml"
+}
+
+head_of() { git -C "$TMP/wt" rev-parse --short HEAD; }
+
+printf '\033[1m==>\033[0m gate regression tests\n'
+
+# 1. A clean diff outside every guarded list passes.
+setup
+commit_file "docs/notes.md" "hello"
+run_check
+permits "unguarded path passes"
+
+# 2. A human_path is a hard failure, with or without a review.
+setup
+commit_file "authenticator/Info.plist" "x"
+run_check
+refuses "human_path hard-fails" "human-only paths modified"
+
+# 3. A human_path fails even when an APPROVE is on record.
+setup
+commit_file "authenticator/Info.plist" "x"
+write_review "$(head_of)" APPROVE
+run_check
+refuses "human_path ignores an APPROVE" "human-only paths modified"
+
+# 4. A review_path with no review on record is refused.
+setup
+commit_file ".ai/adapter/env" "x"
+run_check
+refuses "review_path without a verdict is refused" "no cold review is on record"
+
+# 5. A review_path with REQUEST_CHANGES is refused.
+setup
+commit_file ".ai/adapter/env" "x"
+write_review "$(head_of)" REQUEST_CHANGES
+run_check
+refuses "REQUEST_CHANGES is refused" "not APPROVE"
+
+# 6. A stale APPROVE (reviewed before the last commit) is refused.
+setup
+commit_file ".ai/adapter/env" "x"
+write_review "$(head_of)" APPROVE
+commit_file ".ai/adapter/build" "y"          # a commit lands AFTER the review
+run_check
+refuses "stale APPROVE is refused" "STALE"
+
+# 7. A fresh APPROVE at HEAD passes.
+setup
+commit_file ".ai/adapter/env" "x"
+write_review "$(head_of)" APPROVE
+run_check
+permits "fresh APPROVE at HEAD passes"
+
+# 8. A rename OUT of a guarded directory is still seen. This is why --no-renames exists:
+#    with rename detection on the diff names only the destination, so no rule matches and
+#    crypto walks out of the guarded tree unreviewed. The file must pre-exist on main --
+#    created and moved on the same branch, the net diff legitimately shows only the
+#    destination, and there is nothing for the check to catch.
+setup
+git -C "$TMP/wt" checkout -q main
+commit_file "authenticator/Crypto/HMAC.swift" "let a = 1"
+git -C "$TMP/wt" branch -qD task/99-gate-test
+git -C "$TMP/wt" checkout -qb task/99-gate-test      # branch AFTER the file exists on main
+mkdir -p "$TMP/wt/authenticator/Util"
+git -C "$TMP/wt" mv authenticator/Crypto/HMAC.swift authenticator/Util/HMAC.swift
+git -C "$TMP/wt" commit -qm "move crypto out"
+run_check
+refuses "rename out of Crypto is caught" "no cold review is on record"
+
+# 9. A verdict smuggled somewhere other than the top-level key does not count.
+setup
+commit_file ".ai/adapter/env" "x"
+mkdir -p "$TMP/wt/.ai/run/99"
+printf 'issue: 99\ncommit: %s\nitems:\n  - verdict: APPROVE\n' "$(head_of)" > "$TMP/wt/.ai/run/99/review.yml"
+run_check
+refuses "a nested verdict does not count" "not APPROVE"
+
+# 10. A missing base ref must NOT skip the gate. It used to warn and exit 0, which turned
+#     the entire check off on a typo or an unfetched remote.
+#     Assert the EXIT STATUS, not the message: matching only on text let a patched
+#     scope-check that still exited 0 report PASS here while an Info.plist sailed through.
+setup
+commit_file "authenticator/Info.plist" "x"
+if ( cd "$TMP/wt" && BASE_REF=no/such/ref ./.ai/adapter/checks/scope-check main 99 ) >/dev/null 2>&1; then
+  red "missing base ref must fail closed, but scope-check exited 0"
+else
+  green "missing base ref fails closed"
+fi
+
+# 11. A base that already CONTAINS HEAD yields an empty diff, and every rule below would
+#     pass vacuously. One env var must not switch the gate green.
+setup
+commit_file "authenticator/Info.plist" "x"
+for b in HEAD task/99-gate-test; do
+  if ( cd "$TMP/wt" && BASE_REF="$b" ./.ai/adapter/checks/scope-check main 99 ) >/dev/null 2>&1; then
+    red "BASE_REF=$b must not pass an Info.plist change"
+  else
+    green "BASE_REF=$b is refused as a self-referential base"
+  fi
+done
+
+# 12. An empty or renamed rule list is not a satisfied rule list.
+#     The manifest edit must stay UNCOMMITTED. Committing it puts .ai/adapter/manifest.yml
+#     -- itself a review_path -- into the diff, so the run exits non-zero over a missing
+#     verdict and the assertion passes without ever reaching the mlist guard. scope-check
+#     reads the working tree, so an uncommitted edit is enough.
+setup
+commit_file "authenticator/Info.plist" "x"
+sed 's/^human_paths:/frozen_paths:/' "$REPO/.ai/adapter/manifest.yml" > "$TMP/wt/.ai/adapter/manifest.yml"
+run_check
+refuses "unreadable human_paths list fails closed" "no human_paths list"
+
+# 13. A bare commit as an explicit base drops whatever that commit changed. BASE_REF=HEAD~1
+#     does not contain HEAD, so the ancestor guard alone lets it through, and the Info.plist
+#     commit it excludes never reaches a rule.
+setup
+commit_file "authenticator/Info.plist" "x"
+commit_file "docs/harmless.md" "y"
+for b in HEAD~1 "$(git -C "$TMP/wt" rev-parse HEAD~1)"; do
+  if ( cd "$TMP/wt" && BASE_REF="$b" ./.ai/adapter/checks/scope-check main 99 ) >/dev/null 2>&1; then
+    red "BASE_REF=$b must not hide the Info.plist commit"
+  else
+    green "bare-commit base '$b' is refused"
+  fi
+done
+
+# 14. Every review_paths entry is enforced, not just the two the earlier cases happened to
+#     exercise. Same code path, but an entry silently dropped from the manifest would
+#     otherwise go unnoticed.
+for f in "authenticator/Keychain/Store.swift" "authenticator/Backup/Export.swift" \
+         "scripts/ai/helper.sh" ".github/dependabot.yml"; do
+  setup
+  commit_file "$f" "x"
+  run_check
+  refuses "review_path $f needs a verdict" "no cold review is on record"
+done
+
+# 15. The human_paths entries that had no coverage. Removing any one from the manifest must
+#     turn an assertion red, the same way the review_paths half now does.
+for f in "authenticator/App.entitlements" ".claude/hooks/stop-evidence.sh" ".claude/settings.json"; do
+  setup
+  commit_file "$f" "x"
+  run_check
+  refuses "human_path $f is refused" "human-only paths modified"
+done
+
+# 16. Case. On a case-insensitive filesystem authenticator/info.plist IS Info.plist, and a
+#     case-sensitive matcher would wave it past the human_paths check.
+setup
+commit_file "authenticator/info.plist" "x"
+run_check
+refuses "human_path matching ignores case" "human-only paths modified"
+
+# 17. A manifest pattern that is not a valid ERE must fail closed.
+#
+#     The changed file must match NO other rule. An earlier version used Info.plist, which
+#     trips the **/Info.plist human_paths rule regardless -- so the non-zero exit never came
+#     from the pattern guard and the assertion stayed green even when the guard was replaced
+#     by a bare printf. docs/notes.md matches nothing, so the guard is the only refusal
+#     available, in both lists.
+for lst in human_paths review_paths; do
+  setup
+  commit_file "docs/notes.md" "x"
+  awk -v l="$lst" '
+    $0 ~ "^"l":" { print; inlist=1; print "  - \"**/bad[\""; next }
+    inlist && /^[^[:space:]-]/ { inlist=0 }
+    { print }
+  ' "$REPO/.ai/adapter/manifest.yml" > "$TMP/wt/.ai/adapter/manifest.yml"
+  run_check
+  refuses "an invalid $lst pattern fails closed" "not a valid regular expression"
+done
+
+# 18. A tag is not a branch. `git tag t HEAD~1; BASE_REF=t` once exited 0 on an Info.plist diff.
+setup
+commit_file "authenticator/Info.plist" "x"
+commit_file "docs/harmless.md" "y"
+git -C "$TMP/wt" tag sneaky HEAD~1
+if ( cd "$TMP/wt" && BASE_REF=sneaky ./.ai/adapter/checks/scope-check main 99 ) >/dev/null 2>&1; then
+  red "a tag pointing at HEAD~1 must not be accepted as a base"
+else
+  green "a tag is refused as a base"
+fi
+
+# 19. The ancestor guard on its own: a real BRANCH that contains HEAD passes the named-ref
+#     rule, so only the ancestor check can refuse it.
+setup
+commit_file "authenticator/Info.plist" "x"
+git -C "$TMP/wt" branch ahead
+git -C "$TMP/wt" checkout -q ahead
+mkdir -p "$TMP/wt/docs"
+printf 'z\n' > "$TMP/wt/docs/ahead.md"
+git -C "$TMP/wt" add -A
+git -C "$TMP/wt" commit -qm ahead
+git -C "$TMP/wt" checkout -q task/99-gate-test
+if ( cd "$TMP/wt" && BASE_REF=ahead ./.ai/adapter/checks/scope-check main 99 ) >/dev/null 2>&1; then
+  red "a branch that already contains HEAD must be refused"
+else
+  green "a branch containing HEAD is refused"
+fi
+
+printf '\033[1m==>\033[0m %d passed, %d failed\n' "$pass" "$fail"
+[ "$fail" -eq 0 ] || exit 1
